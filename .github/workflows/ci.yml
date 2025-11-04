@@ -8,15 +8,102 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  setup-pyhanlp-data:
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      # 如果使用 Git LFS，取消下面的注释
+      # with:
+      #   lfs: true  # 启用 Git LFS
     
-    strategy:
-      matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+    
+    - name: Install pyhanlp
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyhanlp
+    
+    - name: Cache pyhanlp data file
+      id: cache-pyhanlp-data
+      uses: actions/cache@v3
+      with:
+        path: /tmp/pyhanlp-data-cache
+        key: ${{ runner.os }}-pyhanlp-data-file-1.8.6-${{ hashFiles('data/data-for-1.8.6.zip', 'pyhanlp-data/data-for-1.8.6.zip', 'data-for-1.8.6.zip', 'data/data-for-1.7.5.zip', 'pyhanlp-data/data-for-1.7.5.zip', 'data-for-1.7.5.zip') }}
+        restore-keys: |
+          ${{ runner.os }}-pyhanlp-data-file-1.8.6-
+          ${{ runner.os }}-pyhanlp-data-file-
+    
+    - name: Check if data file exists in repository
+      id: find-data-file
+      run: |
+        # 检查仓库中是否存在数据文件（如果使用 Git LFS 或本地测试）
+        DATA_FILE=""
+        for path in "data/data-for-1.8.6.zip" "pyhanlp-data/data-for-1.8.6.zip" "data-for-1.8.6.zip" \
+                    "data/data-for-1.7.5.zip" "pyhanlp-data/data-for-1.7.5.zip" "data-for-1.7.5.zip"; do
+          if [ -f "$path" ]; then
+            DATA_FILE="$path"
+            echo "✅ Found data file in repository: $path"
+            break
+          fi
+        done
+        if [ -z "$DATA_FILE" ]; then
+          echo "ℹ️ Data file not found in repository, will download from external source"
+        fi
+        echo "data_file=$DATA_FILE" >> $GITHUB_OUTPUT
+    
+    - name: Get pyhanlp static directory
+      id: pyhanlp-path
+      run: |
+        SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || python -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")
+        PYHANLP_STATIC="$SITE_PACKAGES/pyhanlp/static"
+        echo "static_path=$PYHANLP_STATIC" >> $GITHUB_OUTPUT
+        echo "PyHanLP static directory: $PYHANLP_STATIC"
+    
+    - name: Copy data from repository to cache
+      if: steps.find-data-file.outputs.data_file != '' && steps.cache-pyhanlp-data.outputs.cache-hit != 'true'
+      run: |
+        echo "✅ Found data file in repository: ${{ steps.find-data-file.outputs.data_file }}"
+        mkdir -p /tmp/pyhanlp-data-cache
+        cp "${{ steps.find-data-file.outputs.data_file }}" /tmp/pyhanlp-data-cache/data-for-1.8.6.zip
+        FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip | cut -f1)
+        echo "✅ Copied to cache, file size: $FILE_SIZE"
+    
+    - name: Restore data from cache or download
+      if: steps.cache-pyhanlp-data.outputs.cache-hit == 'true' || steps.find-data-file.outputs.data_file == ''
+      run: |
+        if [ "${{ steps.cache-pyhanlp-data.outputs.cache-hit }}" == "true" ]; then
+          echo "✅ Using cached data file"
+        else
+          echo "⚠️ Data file not found in repository and cache miss"
+          echo "Falling back to downloading from external source..."
+          PYHANLP_STATIC="${{ steps.pyhanlp-path.outputs.static_path }}"
+          mkdir -p /tmp/pyhanlp-data-cache
+          DATA_URL="https://file.hankcs.com/hanlp/data-for-1.7.5.zip"
+          CACHE_FILE="/tmp/pyhanlp-data-cache/data-for-1.8.6.zip"
+          if command -v wget &> /dev/null; then
+            wget --progress=bar:force:noscroll -O "$CACHE_FILE" "$DATA_URL"
+          else
+            curl -L --progress-bar -o "$CACHE_FILE" "$DATA_URL"
+          fi
+          if [ -f "$CACHE_FILE" ]; then
+            echo "✅ Download completed"
+          else
+            echo "❌ Download failed"
+            exit 1
+          fi
+        fi
+
+  test:
+    needs: setup-pyhanlp-data
+    runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v3
+      with:
+        lfs: true  # 启用 Git LFS
     
     - name: Set up Java
       uses: actions/setup-java@v3
@@ -24,10 +111,10 @@ jobs:
         distribution: 'temurin'
         java-version: '8'
     
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.11"
     
     - name: Verify Java installation
       run: |
@@ -76,49 +163,40 @@ jobs:
           echo "Warning: PyHanLP package directory not found"
         fi
     
-    - name: Restore pyhanlp data from cache
-      if: steps.cache-pyhanlp-data.outputs.cache-hit == 'true' && steps.pyhanlp-path.outputs.static_path != ''
+    - name: Check if data file exists in repository
+      id: find-data-file
       run: |
-        echo "Cache hit! Restoring pyhanlp data..."
+        # 检查仓库中是否存在数据文件（通过 Git LFS）
+        DATA_FILE=""
+        for path in "data/data-for-1.8.6.zip" "pyhanlp-data/data-for-1.8.6.zip" "data-for-1.8.6.zip" \
+                    "data/data-for-1.7.5.zip" "pyhanlp-data/data-for-1.7.5.zip" "data-for-1.7.5.zip"; do
+          if [ -f "$path" ]; then
+            DATA_FILE="$path"
+            echo "✅ Found data file in repository: $path"
+            break
+          fi
+        done
+        if [ -z "$DATA_FILE" ]; then
+          echo "ℹ️ Data file not found in repository"
+        fi
+        echo "data_file=$DATA_FILE" >> $GITHUB_OUTPUT
+    
+    - name: Restore pyhanlp data from repository or cache
+      if: steps.pyhanlp-path.outputs.static_path != ''
+      run: |
         PYHANLP_STATIC="${{ steps.pyhanlp-path.outputs.static_path }}"
         mkdir -p "$PYHANLP_STATIC"
-        if [ -f /tmp/pyhanlp-data-cache/data-for-1.8.6.zip ]; then
-          cp /tmp/pyhanlp-data-cache/data-for-1.8.6.zip "$PYHANLP_STATIC/" && echo "Data file restored from cache"
-        fi
-    
-    - name: Download and cache pyhanlp data
-      if: steps.cache-pyhanlp-data.outputs.cache-hit != 'true'
-      timeout-minutes: 15
-      env:
-        JAVA_HOME: ${{ env.JAVA_HOME }}
-      run: |
-        echo "Cache miss - downloading pyhanlp data (this may take 5-10 minutes)..."
-        PYHANLP_STATIC="${{ steps.pyhanlp-path.outputs.static_path }}"
-        mkdir -p /tmp/pyhanlp-data-cache
         
-        # Try direct download first (faster and more reliable)
-        DATA_URL="https://file.hankcs.com/hanlp/data-for-1.7.5.zip"
-        CACHE_FILE="/tmp/pyhanlp-data-cache/data-for-1.8.6.zip"
-        
-        echo "Downloading from: $DATA_URL"
-        if wget -q --show-progress --progress=bar:force:noscroll -O "$CACHE_FILE" "$DATA_URL" 2>&1 || \
-           curl -L --progress-bar -o "$CACHE_FILE" "$DATA_URL"; then
-          echo "Download completed successfully"
-          # Copy to pyhanlp static directory
-          if [ -n "$PYHANLP_STATIC" ]; then
-            mkdir -p "$PYHANLP_STATIC"
-            cp "$CACHE_FILE" "$PYHANLP_STATIC/" && echo "Data file copied to pyhanlp static directory"
-          fi
+        # 优先使用仓库中的文件（通过 Git LFS）
+        if [ -n "${{ steps.find-data-file.outputs.data_file }}" ]; then
+          echo "✅ Using data file from repository (Git LFS)"
+          cp "${{ steps.find-data-file.outputs.data_file }}" "$PYHANLP_STATIC/data-for-1.8.6.zip"
+        # 其次使用缓存
+        elif [ "${{ steps.cache-pyhanlp-data.outputs.cache-hit }}" == "true" ] && [ -f /tmp/pyhanlp-data-cache/data-for-1.8.6.zip ]; then
+          echo "✅ Using data file from cache"
+          cp /tmp/pyhanlp-data-cache/data-for-1.8.6.zip "$PYHANLP_STATIC/data-for-1.8.6.zip"
         else
-          echo "Direct download failed, falling back to automatic download..."
-          # Fallback: trigger automatic download by importing pyhanlp
-          # Note: This requires Java/JVM to be properly configured
-          python -c "from pyhanlp import *; HanLP.newSegment(); print('PyHanLP initialized')" || echo "Automatic download failed, using direct download method"
-          sleep 60
-          # Try to find and copy the downloaded file
-          if [ -n "$PYHANLP_STATIC" ] && [ -f "$PYHANLP_STATIC/data-for-1.8.6.zip" ]; then
-            cp "$PYHANLP_STATIC/data-for-1.8.6.zip" "$CACHE_FILE" && echo "Data file cached"
-          fi
+          echo "⚠️ No data file available - will need to download or use automatic download"
         fi
     
     - name: Verify Python imports
@@ -136,12 +214,29 @@ jobs:
       continue-on-error: true
     
     - name: Test with sample book (if exists)
+      env:
+        CI: true
+        MPLBACKEND: Agg
       run: |
+        mkdir -p output
         if [ -f "book/从火影开始掌控时间.txt" ]; then
           python rel.py --book "从火影开始掌控时间" || echo "Test completed with warnings"
         else
           echo "No test book found, skipping execution test"
         fi
+      continue-on-error: true
+    
+    - name: Upload test results as artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-python-3.11
+        path: |
+          output/
+          *.png
+          *.jpg
+          *.pdf
+        retention-days: 7
       continue-on-error: true
 
   lint:

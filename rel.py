@@ -8,6 +8,10 @@ import os
 from tqdm import tqdm
 import numpy as np
 import networkx as nx
+import matplotlib
+# 在 CI 环境中使用非交互式后端
+if os.getenv('CI') == 'true' or os.getenv('DISPLAY') is None:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pyhanlp import *
 
@@ -241,7 +245,7 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     return rel, names
 
 
-def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True):
+def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_path=None):
 
     # 平衡名字关系
     if balanced == True:
@@ -287,20 +291,40 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True):
         print(info)
         print("="*50)
 
+    # 检测是否在 CI 环境或需要保存文件
+    is_ci = os.getenv('CI') == 'true' or os.getenv('DISPLAY') is None
+    save_images = save_path is not None or is_ci
+    
+    if save_images and save_path is None:
+        save_path = "output"
+    
+    if save_path:
+        os.makedirs(save_path, exist_ok=True)
+    
     #多种方式展示结果
-    # nx.draw(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-    # plt.show()
-    nx.draw_spring(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-    plt.show()
-    if draw_all==True:
-        nx.draw_circular(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-        plt.show()
-        nx.draw_random(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-        plt.show()
-        nx.draw_spectral(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-        plt.show()
-        nx.draw_kamada_kawai(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-        plt.show()
+    layouts = [
+        ("spring", nx.draw_spring),
+        ("circular", nx.draw_circular),
+        ("random", nx.draw_random),
+        ("spectral", nx.draw_spectral),
+        ("kamada_kawai", nx.draw_kamada_kawai)
+    ]
+    
+    layout_count = len(layouts) if draw_all else 1
+    
+    for i, (layout_name, draw_func) in enumerate(layouts[:layout_count]):
+        plt.figure(figsize=(12, 10))
+        draw_func(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
+        plt.title(f"人物关系图 - {layout_name}")
+        
+        if save_images:
+            filename = os.path.join(save_path, f"relationship_{layout_name}.png") if save_path else f"relationship_{layout_name}.png"
+            plt.savefig(filename, dpi=150, bbox_inches='tight')
+            if verbose:
+                print(f"✅ 已保存图片: {filename}")
+            plt.close()
+        else:
+            plt.show()
     # nx.draw_shell(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
     # plt.show()
 

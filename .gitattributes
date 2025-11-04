@@ -1,0 +1,4 @@
+# Git LFS 配置 - 用于大文件
+*.zip filter=lfs diff=lfs merge=lfs -text
+data/**/*.zip filter=lfs diff=lfs merge=lfs -text
+pyhanlp-data/**/*.zip filter=lfs diff=lfs merge=lfs -text
