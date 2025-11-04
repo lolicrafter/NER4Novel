@@ -357,22 +357,22 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
     # 根据节点数量调整参数以避免标签重叠
     num_nodes = len(sub_G.nodes())
     
-    # 动态调整参数
+    # 动态调整参数 - 增大画布以容纳更多内容
     if num_nodes > 50:
         # 大量节点时：增大画布、减小字体、增大节点间距
-        figsize = (20, 16)
+        figsize = (32, 24)  # 从 (20, 16) 增大到 (32, 24)
         font_size = 6
         node_size_multiplier = 50
         k_value = 3  # 用于 spring 布局的节点间距
     elif num_nodes > 30:
         # 中等节点时
-        figsize = (16, 14)
+        figsize = (24, 20)  # 从 (16, 14) 增大到 (24, 20)
         font_size = 8
         node_size_multiplier = 80
         k_value = 2
     else:
         # 少量节点时
-        figsize = (12, 10)
+        figsize = (18, 15)  # 从 (12, 10) 增大到 (18, 15)
         font_size = 10
         node_size_multiplier = 100
         k_value = 1
@@ -395,34 +395,43 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
     layout_count = len(layouts) if draw_all else 1
     
     for i, (layout_name, layout_func) in enumerate(layouts[:layout_count]):
-        plt.figure(figsize=figsize)
-        
-        # 计算布局位置
-        pos = layout_func(sub_G)
-        
-        # 绘制节点和边
-        nx.draw_networkx_nodes(sub_G, pos, node_size=node_sizes, node_color='lightblue', 
-                              alpha=0.7, edgecolors='black', linewidths=0.5)
-        nx.draw_networkx_edges(sub_G, pos, width=sub_weight, alpha=0.5, edge_color='gray')
-        
-        # 绘制标签，使用更好的参数避免重叠
-        labels = {node: node for node in sub_G.nodes()}
-        nx.draw_networkx_labels(sub_G, pos, labels, font_size=font_size, 
-                               font_family='sans-serif', 
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                                        edgecolor='none', alpha=0.7))
-        
-        plt.title(f"人物关系图 - {layout_name} (共{num_nodes}个人物)", fontsize=14, pad=20)
-        plt.axis('off')
-        
-        if save_images:
-            filename = os.path.join(save_path, f"relationship_{layout_name}.png") if save_path else f"relationship_{layout_name}.png"
-            plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
-            if verbose:
-                print(f"✅ 已保存图片: {filename} (节点数: {num_nodes})")
+        try:
+            plt.figure(figsize=figsize)
+            
+            # 计算布局位置（添加超时处理）
+            try:
+                pos = layout_func(sub_G)
+            except Exception as e:
+                print(f"⚠️ 布局算法 {layout_name} 计算失败: {e}")
+                print(f"   使用 spring 布局作为备选")
+                pos = spring_layout_func(sub_G)
+            
+            # 绘制节点和边
+            nx.draw_networkx_nodes(sub_G, pos, node_size=node_sizes, node_color='lightblue', 
+                                  alpha=0.7, edgecolors='black', linewidths=0.5)
+            nx.draw_networkx_edges(sub_G, pos, width=sub_weight, alpha=0.5, edge_color='gray')
+            
+            # 绘制标签，使用更好的参数避免重叠
+            labels = {node: node for node in sub_G.nodes()}
+            nx.draw_networkx_labels(sub_G, pos, labels, font_size=font_size, 
+                                   font_family='sans-serif', 
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                            edgecolor='none', alpha=0.7))
+            
+            plt.title(f"人物关系图 - {layout_name} (共{num_nodes}个人物)", fontsize=14, pad=20)
+            plt.axis('off')
+            
+            if save_images:
+                filename = os.path.join(save_path, f"relationship_{layout_name}.png") if save_path else f"relationship_{layout_name}.png"
+                plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+                if verbose:
+                    print(f"✅ 已保存图片: {filename} (节点数: {num_nodes})")
             plt.close()
-        else:
-            plt.show()
+        except Exception as e:
+            print(f"❌ 生成 {layout_name} 布局图时出错: {e}")
+            if 'plt' in locals():
+                plt.close()
+            continue
     # nx.draw_shell(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
     # plt.show()
 
