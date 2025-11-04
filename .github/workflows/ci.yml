@@ -195,7 +195,29 @@ jobs:
           echo "✅ Using data file from cache"
           cp /tmp/pyhanlp-data-cache/data-for-1.8.6.zip "$PYHANLP_STATIC/data-for-1.8.6.zip"
         else
-          echo "⚠️ No data file available - will need to download or use automatic download"
+          echo "⚠️ No data file available - will download from external source"
+          DATA_URL="https://file.hankcs.com/hanlp/data-for-1.7.5.zip"
+          CACHE_FILE="/tmp/pyhanlp-data-cache/data-for-1.8.6.zip"
+          if command -v wget &> /dev/null; then
+            wget --progress=bar:force:noscroll -O "$CACHE_FILE" "$DATA_URL"
+          else
+            curl -L --progress-bar -o "$CACHE_FILE" "$DATA_URL"
+          fi
+          if [ -f "$CACHE_FILE" ]; then
+            echo "✅ Download completed, copying to static directory"
+            cp "$CACHE_FILE" "$PYHANLP_STATIC/data-for-1.8.6.zip"
+          else
+            echo "❌ Download failed"
+            exit 1
+          fi
+        fi
+        
+        # 验证文件是否存在
+        if [ -f "$PYHANLP_STATIC/data-for-1.8.6.zip" ]; then
+          FILE_SIZE=$(du -h "$PYHANLP_STATIC/data-for-1.8.6.zip" | cut -f1)
+          echo "✅ Data file ready at $PYHANLP_STATIC/data-for-1.8.6.zip (size: $FILE_SIZE)"
+        else
+          echo "⚠️ Warning: Data file not found, pyhanlp may download automatically"
         fi
     
     - name: Verify Python imports
@@ -218,11 +240,33 @@ jobs:
         MPLBACKEND: Agg
       run: |
         mkdir -p output
+        echo "Checking for test books..."
+        ls -la book/ 2>/dev/null || echo "book/ directory not found"
         if [ -f "book/从火影开始掌控时间.txt" ]; then
+          echo "Running test with book: 从火影开始掌控时间"
           python rel.py --book "从火影开始掌控时间" || echo "Test completed with warnings"
         else
           echo "No test book found, skipping execution test"
+          # 创建一个占位文件，确保 output 目录存在
+          echo "No test output - book file not available" > output/README.txt
         fi
+        
+        # 列出所有生成的文件
+        echo "Generated files in output directory:"
+        find output -type f 2>/dev/null || echo "No files found in output/"
+        echo "Files in root directory:"
+        find . -maxdepth 1 -name "*.png" -o -name "*.jpg" -o -name "*.pdf" 2>/dev/null || echo "No image files in root"
+      continue-on-error: true
+    
+    - name: List generated files for debugging
+      if: always()
+      run: |
+        echo "=== Files in output directory ==="
+        ls -lah output/ 2>/dev/null || echo "output/ directory does not exist"
+        echo "=== Files in root directory ==="
+        ls -lah *.png *.jpg *.pdf 2>/dev/null || echo "No image files in root"
+        echo "=== All files recursively ==="
+        find . -name "*.png" -o -name "*.jpg" -o -name "*.pdf" 2>/dev/null | head -20 || echo "No image files found"
       continue-on-error: true
     
     - name: Upload test results as artifacts
@@ -231,10 +275,11 @@ jobs:
       with:
         name: test-results-python-3.11
         path: |
-          output/
+          output/**
           *.png
           *.jpg
           *.pdf
+        if-no-files-found: warn
         retention-days: 7
       continue-on-error: true
 

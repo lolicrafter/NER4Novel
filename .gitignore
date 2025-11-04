@@ -11,6 +11,8 @@ data/data-for-1.8.6.zip
 .*/
 *.txt
 !requirements.txt
+!book/
+!book/**
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
