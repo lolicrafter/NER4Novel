@@ -306,14 +306,22 @@ jobs:
             print(f'Jars in directory: {os.listdir(jar_dir)}')
         " || echo "JPype verification failed"
         
-        if [ -f "book/从火影开始掌控时间.txt" ]; then
-          echo "Running test with book: 从火影开始掌控时间"
-          python rel.py --book "从火影开始掌控时间" || {
+        # 动态查找 book 目录下的书籍文件
+        echo "Looking for books in book/ directory..."
+        BOOK_FILE=$(find book -maxdepth 1 -name "*.txt" -type f | head -n 1)
+        
+        if [ -n "$BOOK_FILE" ] && [ -f "$BOOK_FILE" ]; then
+          # 提取文件名（不含路径和扩展名）
+          BOOK_NAME=$(basename "$BOOK_FILE" .txt)
+          echo "Found book: $BOOK_NAME"
+          echo "Book file: $BOOK_FILE"
+          echo "Running test with book: $BOOK_NAME"
+          python rel.py --book "$BOOK_NAME" || {
             echo "⚠️ Test failed, but continuing..."
             echo "Test error details above"
           }
         else
-          echo "No test book found, skipping execution test"
+          echo "No test book found in book/ directory, skipping execution test"
           # 创建一个占位文件，确保 output 目录存在
           echo "No test output - book file not available" > output/README.txt
         fi
