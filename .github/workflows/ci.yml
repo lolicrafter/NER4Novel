@@ -47,7 +47,7 @@ jobs:
         DATA_URL="https://file.hankcs.com/hanlp/data-for-1.8.6.zip"
         CACHE_FILE="/tmp/pyhanlp-data-cache/data-for-1.8.6.zip"
         
-        echo "Downloading data file from $DATA_URL..."
+        echo "📥 Cache miss - downloading data file from $DATA_URL..."
         if command -v wget &> /dev/null; then
           wget --progress=bar:force:noscroll --timeout=300 --tries=3 -O "$CACHE_FILE" "$DATA_URL" || {
             echo "⚠️ wget failed, trying alternative URL..."
@@ -65,9 +65,24 @@ jobs:
         if [ -f "$CACHE_FILE" ]; then
           FILE_SIZE=$(du -h "$CACHE_FILE" | cut -f1)
           echo "✅ Download completed: $FILE_SIZE"
+          echo "💾 Cache will be saved automatically at end of job"
         else
           echo "❌ Download failed"
           exit 1
+        fi
+    - name: Verify cache status
+      if: always()
+      run: |
+        if [ "${{ steps.cache-pyhanlp-data.outputs.cache-hit }}" == "true" ]; then
+          echo "✅ Cache hit - using cached data file"
+          FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip 2>/dev/null | cut -f1 || echo "unknown")
+          echo "📦 Cached file size: $FILE_SIZE"
+        else
+          echo "📥 Cache miss - downloaded new file"
+          if [ -f /tmp/pyhanlp-data-cache/data-for-1.8.6.zip ]; then
+            FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip | cut -f1)
+            echo "💾 New file will be cached (size: $FILE_SIZE)"
+          fi
         fi
 
   test:
@@ -142,7 +157,7 @@ jobs:
         DATA_URL="https://file.hankcs.com/hanlp/data-for-1.8.6.zip"
         CACHE_FILE="/tmp/pyhanlp-data-cache/data-for-1.8.6.zip"
         
-        echo "Downloading data file from $DATA_URL..."
+        echo "📥 Cache miss - downloading data file from $DATA_URL..."
         if command -v wget &> /dev/null; then
           wget --progress=bar:force:noscroll --timeout=300 --tries=3 -O "$CACHE_FILE" "$DATA_URL" || {
             echo "⚠️ wget failed, trying alternative URL..."
@@ -160,9 +175,25 @@ jobs:
         if [ -f "$CACHE_FILE" ]; then
           FILE_SIZE=$(du -h "$CACHE_FILE" | cut -f1)
           echo "✅ Download completed: $FILE_SIZE"
+          echo "💾 Cache will be saved automatically at end of job"
         else
           echo "❌ Download failed"
           exit 1
+        fi
+    
+    - name: Verify cache status
+      if: always()
+      run: |
+        if [ "${{ steps.cache-pyhanlp-data.outputs.cache-hit }}" == "true" ]; then
+          echo "✅ Cache hit - using cached data file"
+          FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip 2>/dev/null | cut -f1 || echo "unknown")
+          echo "📦 Cached file size: $FILE_SIZE"
+        else
+          echo "📥 Cache miss in test job - will download"
+          if [ -f /tmp/pyhanlp-data-cache/data-for-1.8.6.zip ]; then
+            FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip | cut -f1)
+            echo "💾 File downloaded (size: $FILE_SIZE), will be cached for next run"
+          fi
         fi
     
     - name: Install pyhanlp data file
