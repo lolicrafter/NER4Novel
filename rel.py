@@ -233,7 +233,7 @@ def filter_nr(nr_nrf_dict, threshold = -1,first=False):
 def filter_names(rel, names, trans={}, err=[], threshold= -1):
     """对结果进行精细的调整与过滤
 
-    处理顺序: 转换 ==> 去错 ==> 过滤 ==> 排序
+    处理顺序: 转换 ==> 去错 ==> 去重（子串合并）==> 过滤 ==> 排序
 
     Args:
         rel:关系矩阵 n x n
@@ -269,6 +269,50 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
         indexes = [list(names).index(n) for n in name_new]
         names = np.array(name_new)
         rel = rel[indexes, :][:, indexes]
+
+    # 去重：如果一个较短的人名是另一个更长人名的子串，删除较短的人名
+    # 例如："路青怜" 和 "路青" -> 保留 "路青怜"，删除 "路青"
+    # 例如："顾秋绵" 和 "顾秋" -> 保留 "顾秋绵"，删除 "顾秋"
+    names_list = names.tolist()
+    names_to_remove = set()
+    name_frequencies = {name: rel[names_list.index(name), names_list.index(name)] for name in names_list}
+    
+    # 按长度排序，先处理较短的名称
+    sorted_names = sorted(names_list, key=lambda x: (len(x), -name_frequencies.get(x, 0)))
+    
+    for i, short_name in enumerate(sorted_names):
+        if short_name in names_to_remove:
+            continue
+        
+        short_freq = name_frequencies.get(short_name, 0)
+        
+        # 检查是否有更长的名字包含这个短名字
+        for long_name in names_list:
+            if long_name == short_name or long_name in names_to_remove:
+                continue
+            
+            # 如果短名字是长名字的子串（前缀、后缀或中间部分）
+            if short_name in long_name and len(short_name) < len(long_name):
+                long_freq = name_frequencies.get(long_name, 0)
+                
+                # 如果长名字频率更高或相当（至少是短名字的 0.5 倍），则删除短名字
+                # 这样可以处理 "路青怜" 和 "路青" 的情况
+                if long_freq >= short_freq * 0.5:
+                    names_to_remove.add(short_name)
+                    # 将短名字的关系合并到长名字中
+                    short_idx = names_list.index(short_name)
+                    long_idx = names_list.index(long_name)
+                    rel[long_idx, :] += rel[short_idx, :]
+                    rel[:, long_idx] += rel[:, short_idx]
+                    break
+    
+    # 移除需要删除的名字
+    if names_to_remove:
+        name_new = [n for n in names_list if n not in names_to_remove]
+        indexes = [names_list.index(n) for n in name_new]
+        names = np.array(name_new)
+        rel = rel[indexes, :][:, indexes]
+        print(f"✅ 去重处理：删除了 {len(names_to_remove)} 个重复子串人名: {sorted(names_to_remove)}")
 
     # 过滤掉低频的名字
     if threshold != 0:
