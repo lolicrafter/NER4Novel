@@ -123,8 +123,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        # Install/upgrade JPype1 to ensure compatibility
+        pip install --upgrade JPype1
         # Verify JPype can find Java after installation
         python -c "import jpype; print('JPype version:', jpype.__version__); print('JPype JVM path:', jpype.getDefaultJVMPath())" || echo "JPype installation check completed"
+        # Verify JPype jar file exists
+        python -c "import jpype; import os; jar_path = os.path.join(os.path.dirname(jpype.__file__), 'jars', 'jpype.jar'); print('JPype jar path:', jar_path); print('JPype jar exists:', os.path.exists(jar_path))" || echo "JPype jar check completed"
     
     - name: Get pyhanlp static directory
       id: pyhanlp-path
@@ -229,13 +233,41 @@ jobs:
       env:
         CI: true
         MPLBACKEND: Agg
+        JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
         mkdir -p output
         echo "Checking for test books..."
         ls -la book/ 2>/dev/null || echo "book/ directory not found"
+        
+        # Verify JPype before running test
+        echo "Verifying JPype and Java setup..."
+        python -c "
+        import jpype
+        import os
+        import sys
+        
+        print(f'JPype version: {jpype.__version__}')
+        print(f'JAVA_HOME: {os.environ.get(\"JAVA_HOME\", \"not set\")}')
+        print(f'JPype JVM path: {jpype.getDefaultJVMPath()}')
+        
+        # Check if jar file exists
+        jpype_dir = os.path.dirname(jpype.__file__)
+        jar_path = os.path.join(jpype_dir, 'jars', 'jpype.jar')
+        print(f'JPype jar path: {jar_path}')
+        print(f'JPype jar exists: {os.path.exists(jar_path)}')
+        
+        # List jar directory
+        jar_dir = os.path.join(jpype_dir, 'jars')
+        if os.path.exists(jar_dir):
+            print(f'Jars in directory: {os.listdir(jar_dir)}')
+        " || echo "JPype verification failed"
+        
         if [ -f "book/从火影开始掌控时间.txt" ]; then
           echo "Running test with book: 从火影开始掌控时间"
-          python rel.py --book "从火影开始掌控时间" || echo "Test completed with warnings"
+          python rel.py --book "从火影开始掌控时间" || {
+            echo "⚠️ Test failed, but continuing..."
+            echo "Test error details above"
+          }
         else
           echo "No test book found, skipping execution test"
           # 创建一个占位文件，确保 output 目录存在
@@ -266,10 +298,7 @@ jobs:
       with:
         name: test-results-python-3.11
         path: |
-          output/**
-          *.png
-          *.jpg
-          *.pdf
+          output/
         if-no-files-found: warn
         retention-days: 7
       continue-on-error: true
