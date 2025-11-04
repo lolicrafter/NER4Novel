@@ -2,5 +2,5 @@ tqdm
 numpy
 networkx
 matplotlib
-JPype1>=1.4.0
+JPype1==1.4.1
 pyhanlp
