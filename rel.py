@@ -346,27 +346,72 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
     if save_path:
         os.makedirs(save_path, exist_ok=True)
     
+    # 根据节点数量调整参数以避免标签重叠
+    num_nodes = len(sub_G.nodes())
+    
+    # 动态调整参数
+    if num_nodes > 50:
+        # 大量节点时：增大画布、减小字体、增大节点间距
+        figsize = (20, 16)
+        font_size = 6
+        node_size_multiplier = 50
+        k_value = 3  # 用于 spring 布局的节点间距
+    elif num_nodes > 30:
+        # 中等节点时
+        figsize = (16, 14)
+        font_size = 8
+        node_size_multiplier = 80
+        k_value = 2
+    else:
+        # 少量节点时
+        figsize = (12, 10)
+        font_size = 10
+        node_size_multiplier = 100
+        k_value = 1
+    
+    # 调整节点大小（确保最小尺寸）
+    node_sizes = np.maximum(sub_nums * node_size_multiplier, 100)
+    
     #多种方式展示结果
+    def spring_layout_func(G):
+        return nx.spring_layout(G, k=k_value, iterations=50)
+    
     layouts = [
-        ("spring", nx.draw_spring),
-        ("circular", nx.draw_circular),
-        ("random", nx.draw_random),
-        ("spectral", nx.draw_spectral),
-        ("kamada_kawai", nx.draw_kamada_kawai)
+        ("spring", spring_layout_func),
+        ("circular", nx.circular_layout),
+        ("kamada_kawai", nx.kamada_kawai_layout),
+        ("spectral", nx.spectral_layout),
+        ("random", nx.random_layout)
     ]
     
     layout_count = len(layouts) if draw_all else 1
     
-    for i, (layout_name, draw_func) in enumerate(layouts[:layout_count]):
-        plt.figure(figsize=(12, 10))
-        draw_func(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
-        plt.title(f"人物关系图 - {layout_name}")
+    for i, (layout_name, layout_func) in enumerate(layouts[:layout_count]):
+        plt.figure(figsize=figsize)
+        
+        # 计算布局位置
+        pos = layout_func(sub_G)
+        
+        # 绘制节点和边
+        nx.draw_networkx_nodes(sub_G, pos, node_size=node_sizes, node_color='lightblue', 
+                              alpha=0.7, edgecolors='black', linewidths=0.5)
+        nx.draw_networkx_edges(sub_G, pos, width=sub_weight, alpha=0.5, edge_color='gray')
+        
+        # 绘制标签，使用更好的参数避免重叠
+        labels = {node: node for node in sub_G.nodes()}
+        nx.draw_networkx_labels(sub_G, pos, labels, font_size=font_size, 
+                               font_family='sans-serif', 
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                        edgecolor='none', alpha=0.7))
+        
+        plt.title(f"人物关系图 - {layout_name} (共{num_nodes}个人物)", fontsize=14, pad=20)
+        plt.axis('off')
         
         if save_images:
             filename = os.path.join(save_path, f"relationship_{layout_name}.png") if save_path else f"relationship_{layout_name}.png"
-            plt.savefig(filename, dpi=150, bbox_inches='tight')
+            plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
             if verbose:
-                print(f"✅ 已保存图片: {filename}")
+                print(f"✅ 已保存图片: {filename} (节点数: {num_nodes})")
             plt.close()
         else:
             plt.show()
