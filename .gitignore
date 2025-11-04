@@ -1,8 +1,12 @@
-# 忽略数据文件（太大，使用 Git LFS 或 CI 自动下载）
-data/*.zip
-pyhanlp-data/*.zip
+# 允许数据文件（通过 Git LFS 管理）
+!data/
+!pyhanlp-data/
+!*.zip
+# 但忽略其他 data 目录下的临时文件
 data/temp/
 data/cache/
+# 忽略大文件（fork 仓库不能推送 LFS，CI 会从外部源下载）
+data/data-for-1.8.6.zip
 
 .*/
 *.txt
