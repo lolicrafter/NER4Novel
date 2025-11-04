@@ -58,11 +58,20 @@ class hanlp(object):
         elif analyzer=="CRF":
             self.analyzer = self.CRFLAnalyzer.enableCustomDictionary(custom_dict)
         
+        # Cache JString class for type conversion
+        self.JString = JClass("java.lang.String")
+        
     def cut(self, words):
         res = []
+        # Convert Python string to Java String for JPype1 compatibility
+        # This resolves ambiguous overload between seg(String) and seg(char[])
+        if isinstance(words, str):
+            words = self.JString(words)
+        
         if self.analyzer is None:
             terms = HanLP.segment(words)
         else:
+            # Use explicit method call to avoid overload ambiguity
             terms = self.analyzer.seg(words)
         for term in terms:
             res.append( (str(term.word),str(term.nature)) )
