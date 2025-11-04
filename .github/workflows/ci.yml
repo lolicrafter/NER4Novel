@@ -117,6 +117,11 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
     
+    - name: Install system fonts for Chinese characters
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei || echo "Font installation failed, will use fallback"
+    
     - name: Install dependencies
       env:
         JAVA_HOME: ${{ env.JAVA_HOME }}
@@ -128,6 +133,8 @@ jobs:
         pip install -r requirements.txt || pip install tqdm numpy networkx matplotlib pyhanlp
         # Ensure JPype1==1.4.1 is still installed (pyhanlp might upgrade it)
         pip install --force-reinstall --no-deps JPype1==1.4.1
+        # Clear matplotlib font cache to detect newly installed fonts
+        python -c "import matplotlib; matplotlib.font_manager._rebuild()" || echo "Font cache rebuild failed"
         # Verify JPype can find Java after installation
         python -c "import jpype; print('JPype version:', jpype.__version__); print('JPype JVM path:', jpype.getDefaultJVMPath())" || echo "JPype installation check completed"
         # Verify JPype jar file location

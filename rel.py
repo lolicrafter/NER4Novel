@@ -17,7 +17,29 @@ from pyhanlp import *
 
 
 
-plt.rcParams["font.sans-serif"] = ["SimHei"]  # 用来正常显示中文标签
+# 设置中文字体 - 尝试多个字体选项以支持不同环境
+# 优先使用 SimHei（Windows/本地），如果不可用则使用其他支持中文的字体
+import matplotlib.font_manager as fm
+
+# 获取系统可用的中文字体
+chinese_fonts = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 
+                 'Noto Sans CJK SC', 'Source Han Sans CN', 'Droid Sans Fallback', 'DejaVu Sans']
+available_fonts = [f.name for f in fm.fontManager.ttflist]
+
+# 找到第一个可用的中文字体
+font_found = None
+for font in chinese_fonts:
+    if font in available_fonts:
+        font_found = font
+        break
+
+if font_found:
+    plt.rcParams["font.sans-serif"] = [font_found] + plt.rcParams["font.sans-serif"]
+else:
+    # 如果没有找到中文字体，使用默认字体并尝试设置
+    plt.rcParams["font.sans-serif"] = ["DejaVu Sans"] + plt.rcParams["font.sans-serif"]
+    print("⚠️ Warning: No Chinese font found, Chinese characters may display as squares")
+
 plt.rcParams["axes.unicode_minus"] = False  # 用来正常显示负号
 
 
