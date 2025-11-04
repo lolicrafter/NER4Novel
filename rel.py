@@ -23,8 +23,17 @@ plt.rcParams["axes.unicode_minus"] = False  # 用来正常显示负号
 
 class hanlp(object):
     def __init__(self, analyzer = "Perceptron", custom_dict = True ):
-        ## 数据集目录
-        data_path = "/home/dream/miniconda3/envs/py37/lib/python3.7/site-packages/pyhanlp/static/data/model/perceptron/large/cws.bin"
+        ## 数据集目录 - 动态获取 pyhanlp 安装路径
+        import pyhanlp
+        
+        # 获取 pyhanlp 的安装路径
+        pyhanlp_dir = os.path.dirname(pyhanlp.__file__)
+        static_dir = os.path.join(pyhanlp_dir, 'static')
+        data_path = os.path.join(static_dir, 'data', 'model', 'perceptron', 'large', 'cws.bin')
+        
+        # 如果文件不存在，使用 HanLP 的默认配置（让 HanLP 自动查找数据文件）
+        if not os.path.exists(data_path):
+            data_path = None
         
         ## 构造人名分析器
         # 常规识别
@@ -35,8 +44,13 @@ class hanlp(object):
 
         #感知机识别
         _PLAnalyzer = JClass("com.hankcs.hanlp.model.perceptron.PerceptronLexicalAnalyzer")
-        self.PLAnalyzer = _PLAnalyzer(
-            data_path, HanLP.Config.PerceptronPOSModelPath, HanLP.Config.PerceptronNERModelPath)
+        if data_path:
+            # 使用指定的路径
+            self.PLAnalyzer = _PLAnalyzer(
+                data_path, HanLP.Config.PerceptronPOSModelPath, HanLP.Config.PerceptronNERModelPath)
+        else:
+            # 使用默认配置（HanLP 会自动查找数据文件）
+            self.PLAnalyzer = _PLAnalyzer()
         
         self.analyzer = self.PLAnalyzer
         if analyzer=="Perceptron":
