@@ -342,7 +342,21 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     return rel, names
 
 
-def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_path=None):
+def sanitize_filename(filename):
+    """清理文件名，移除或替换不允许的字符"""
+    import re
+    # 移除或替换文件系统不支持的字符
+    # Windows 不支持的字符: < > : " / \ | ? *
+    # 保留中文字符、字母、数字、下划线、连字符、空格
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # 移除首尾空格和点
+    filename = filename.strip(' .')
+    # 限制文件名长度（避免过长）
+    if len(filename) > 100:
+        filename = filename[:100]
+    return filename
+
+def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_path=None, book_name=None):
 
     # 平衡名字关系
     if balanced == True:
@@ -466,7 +480,14 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
             plt.axis('off')
             
             if save_images:
-                filename = os.path.join(save_path, f"relationship_{layout_name}.png") if save_path else f"relationship_{layout_name}.png"
+                # 生成文件名，包含书籍名称（如果提供）
+                if book_name:
+                    safe_book_name = sanitize_filename(book_name)
+                    filename_base = f"{safe_book_name}_relationship_{layout_name}"
+                else:
+                    filename_base = f"relationship_{layout_name}"
+                
+                filename = os.path.join(save_path, f"{filename_base}.png") if save_path else f"{filename_base}.png"
                 plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
                 if verbose:
                     print(f"✅ 已保存图片: {filename} (节点数: {num_nodes})")
@@ -578,6 +599,7 @@ if __name__ == "__main__":
     # print(names, np.diag(relations))
 
     ##### 展示最终结果和信息
-    plot_rel(relations,names)
+    # 传递书籍名称给 plot_rel 函数，用于生成带书籍名的文件名
+    plot_rel(relations, names, book_name=args.book)
 
    
