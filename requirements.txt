@@ -2,6 +2,7 @@ tqdm
 numpy
 networkx
 matplotlib
+scipy
 JPype1==1.4.1
 pyhanlp
 paddlenlp>=2.5.0

@@ -123,9 +123,9 @@ jobs:
         fi
 
   test:
-    needs: [setup-pyhanlp-data]
+    needs: [setup-pyhanlp-data, test-api-optimized]
     runs-on: ubuntu-latest
-    # 注意：如果 test-api-optimized 完成，会尝试下载其结果，但不强制依赖
+    # 顺序执行：test 等待 test-api-optimized 完成后再运行，确保 artifact 可用
     
     steps:
     - uses: actions/checkout@v4
@@ -190,7 +190,7 @@ jobs:
         pip show jpype1 | grep Version || echo "⚠️ jpype1 版本检查失败"
         
         echo "📦 安装基础依赖..."
-        pip install tqdm numpy networkx matplotlib
+        pip install tqdm numpy networkx matplotlib scipy
         echo "✅ 基础依赖安装完成"
         
         echo "📦 安装数据处理依赖..."
@@ -408,31 +408,30 @@ jobs:
         find . -name "*.png" -o -name "*.jpg" -o -name "*.pdf" 2>/dev/null | head -20 || echo "No image files found"
       continue-on-error: true
     
-    - name: Download API optimized results (if available)
-      if: always()
-      run: |
-        echo "=== 尝试下载 API 优化结果 ==="
-        echo "检查 test-api-optimized job 是否已完成..."
-      continue-on-error: true
-    
     - name: Download API optimized results artifact
       if: always()
+      continue-on-error: true
       uses: actions/download-artifact@v4
       with:
         name: api-optimized-results
         path: api-output/
-      continue-on-error: true
     
-    - name: Log downloaded artifacts
+    - name: Log artifact download status
       if: always()
       run: |
-        echo "=== 下载的 Artifacts ==="
-        if [ -d "api-output" ]; then
-          echo "✅ api-output/ 目录存在"
+        echo "=== Artifact 下载状态 ==="
+        if [ -d "api-output" ] && [ "$(ls -A api-output 2>/dev/null)" ]; then
+          echo "✅ 成功下载 api-optimized-results artifact"
           echo "目录内容:"
           ls -lah api-output/ || echo "无法列出目录内容"
         else
-          echo "⚠️ api-output/ 目录不存在（可能 test-api-optimized job 未运行或失败）"
+          echo "⚠️ api-optimized-results artifact 不存在或为空"
+          echo "💡 可能的原因："
+          echo "   - test-api-optimized job 失败或未上传 artifact"
+          echo "   - API_KEY 未设置，test-api-optimized 仅进行了语法检查"
+          echo "   - 测试书籍不存在，test-api-optimized 跳过了运行"
+          echo ""
+          echo "注意：test job 已等待 test-api-optimized 完成，如果 artifact 不存在，说明 test-api-optimized 可能未生成结果"
         fi
       continue-on-error: true
     
@@ -533,7 +532,7 @@ jobs:
         echo "✅ pip 升级完成: $(pip --version)"
         
         echo "📦 安装基础依赖..."
-        pip install tqdm numpy networkx matplotlib
+        pip install tqdm numpy networkx matplotlib scipy
         echo "✅ 基础依赖安装完成"
         
         echo "📦 安装数据处理依赖..."
