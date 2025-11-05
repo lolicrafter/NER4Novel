@@ -2,9 +2,9 @@ name: CI with Optimized API
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master, feature/**, fix/** ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ main, master, feature/**, fix/** ]
   workflow_dispatch:
 
 jobs:
