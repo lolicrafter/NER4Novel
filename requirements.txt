@@ -4,3 +4,6 @@ networkx
 matplotlib
 JPype1==1.4.1
 pyhanlp
+paddlenlp>=2.5.0
+pandas>=1.3.0
+openpyxl>=3.0.0
