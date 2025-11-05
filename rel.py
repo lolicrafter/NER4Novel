@@ -16,6 +16,18 @@ import matplotlib.pyplot as plt
 from pyhanlp import *
 from relation_extractor import RelationExtractor
 
+# 尝试导入 pandas 用于 Excel 导出
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    try:
+        import openpyxl
+        HAS_OPENPYXL = True
+    except ImportError:
+        HAS_OPENPYXL = False
+
 
 
 # 设置中文字体 - 尝试多个字体选项以支持不同环境
@@ -357,7 +369,7 @@ def sanitize_filename(filename):
         filename = filename[:100]
     return filename
 
-def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_path=None, book_name=None):
+def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_path=None, book_name=None, relation_info=None):
 
     # 平衡名字关系
     if balanced == True:
@@ -372,11 +384,26 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
     for i,name in enumerate(names):
         G.add_node(name, num = nums[i])
 
-    # 将关系加入图
+    # 将关系加入图，并添加关系类型标签
+    edge_labels = {}  # 存储边的标签
     for i in range(len(names)):
         for j in range(i+1, len(names)):
             if relations[i, j] != 0:
                 G.add_edge(names[i], names[j], weight=relations[i, j])
+                
+                # 如果有关系信息，添加关系类型标签
+                if relation_info:
+                    # 查找这两个人物之间的关系（relation_info 的键是已排序的元组）
+                    key = tuple(sorted([names[i], names[j]]))
+                    if key in relation_info:
+                        rel_dict = relation_info[key]
+                        if isinstance(rel_dict, dict):
+                            rel_type = rel_dict.get('relation', '')
+                        else:
+                            rel_type = str(rel_dict) if rel_dict else ''
+                        
+                        if rel_type:
+                            edge_labels[(names[i], names[j])] = rel_type
 
     # 判断是否联通并切分子图
     max_weight = 0.0
@@ -470,12 +497,33 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
                                   alpha=0.7, edgecolors='black', linewidths=0.5)
             nx.draw_networkx_edges(sub_G, pos, width=sub_weight, alpha=0.5, edge_color='gray')
             
-            # 绘制标签，使用更好的参数避免重叠
+            # 绘制节点标签
             labels = {node: node for node in sub_G.nodes()}
             nx.draw_networkx_labels(sub_G, pos, labels, font_size=font_size, 
                                    font_family='sans-serif', 
                                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                                             edgecolor='none', alpha=0.7))
+            
+            # 绘制边的关系标签
+            if edge_labels:
+                # 过滤出在子图中的边标签
+                sub_edge_labels = {}
+                for edge, label in edge_labels.items():
+                    if edge[0] in sub_G.nodes() and edge[1] in sub_G.nodes():
+                        # 检查边是否在子图中
+                        if sub_G.has_edge(edge[0], edge[1]):
+                            sub_edge_labels[edge] = label
+                
+                if sub_edge_labels:
+                    # 绘制边标签（networkx 会自动计算边的中点位置）
+                    nx.draw_networkx_edge_labels(
+                        sub_G, pos, 
+                        edge_labels=sub_edge_labels,
+                        font_size=max(6, font_size - 2),  # 关系标签字体稍小
+                        font_family='sans-serif',
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='yellow', 
+                                 edgecolor='orange', alpha=0.8, linewidth=0.5)
+                    )
             
             plt.title(f"人物关系图 - {layout_name} (共{num_nodes}个人物)", fontsize=14, pad=20)
             plt.axis('off')
@@ -500,6 +548,107 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
             continue
     # nx.draw_shell(sub_G, with_labels=True, node_size=sub_nums, width=sub_weight)
     # plt.show()
+
+def export_relations_to_excel(relation_info, extracted_relations, names, relations_matrix, 
+                              book_name=None, save_path="output"):
+    """
+    将人物关系导出到 Excel 表格
+    
+    Args:
+        relation_info: 关系信息字典
+        extracted_relations: 原始抽取的关系列表
+        names: 人物名称列表
+        relations_matrix: 关系矩阵
+        book_name: 书籍名称
+        save_path: 保存路径
+    """
+    if not HAS_PANDAS and not HAS_OPENPYXL:
+        print("⚠️ 未安装 pandas 或 openpyxl，无法导出 Excel 文件")
+        print("   请运行: pip install pandas openpyxl")
+        return None
+    
+    os.makedirs(save_path, exist_ok=True)
+    
+    # 准备 Excel 数据
+    excel_data = []
+    
+    # 1. 关系详情表（从 extracted_relations）
+    if extracted_relations:
+        for rel in extracted_relations:
+            excel_data.append({
+                '人物1': rel.get('person1', ''),
+                '人物2': rel.get('person2', ''),
+                '关系类型': rel.get('relation', ''),
+                '关系分类': rel.get('category', ''),
+                '置信度': round(rel.get('confidence', 0), 3),
+                '抽取方法': rel.get('method', ''),
+                '关键词': rel.get('keyword', ''),
+                '示例句子': rel.get('sentence', '')[:100] if rel.get('sentence') else ''  # 截断长句子
+            })
+    
+    # 2. 关系汇总表（从 relation_info，去重后的关系）
+    summary_data = []
+    if relation_info:
+        for key, rel_dict in relation_info.items():
+            if isinstance(rel_dict, dict):
+                summary_data.append({
+                    '人物1': key[0] if len(key) > 0 else '',
+                    '人物2': key[1] if len(key) > 1 else '',
+                    '关系类型': rel_dict.get('relation', ''),
+                    '关系分类': rel_dict.get('category', ''),
+                    '最高置信度': round(rel_dict.get('confidence', 0), 3)
+                })
+    
+    # 3. 关系矩阵表（共现统计）
+    matrix_data = []
+    names_list = list(names)
+    for i, name1 in enumerate(names_list):
+        for j, name2 in enumerate(names_list):
+            if i != j and relations_matrix[i, j] > 0:
+                matrix_data.append({
+                    '人物1': name1,
+                    '人物2': name2,
+                    '关系强度': round(float(relations_matrix[i, j]), 3)
+                })
+    
+    # 使用 pandas 导出（如果可用）
+    if HAS_PANDAS:
+        try:
+            filename = f"{book_name}_人物关系.xlsx" if book_name else "人物关系.xlsx"
+            filename = os.path.join(save_path, sanitize_filename(filename))
+            
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                # 关系详情表
+                if excel_data:
+                    df_detail = pd.DataFrame(excel_data)
+                    df_detail.to_excel(writer, sheet_name='关系详情', index=False)
+                
+                # 关系汇总表
+                if summary_data:
+                    df_summary = pd.DataFrame(summary_data)
+                    df_summary.to_excel(writer, sheet_name='关系汇总', index=False)
+                
+                # 关系矩阵表
+                if matrix_data:
+                    df_matrix = pd.DataFrame(matrix_data)
+                    df_matrix.to_excel(writer, sheet_name='关系矩阵', index=False)
+                
+                # 人物列表表
+                df_persons = pd.DataFrame({
+                    '人物名称': names_list,
+                    '出现次数': [round(float(relations_matrix[i, i]), 2) for i in range(len(names_list))]
+                })
+                df_persons.to_excel(writer, sheet_name='人物列表', index=False)
+            
+            print(f"✅ 已导出 Excel 文件: {filename}")
+            return filename
+        except Exception as e:
+            print(f"⚠️ 导出 Excel 失败: {e}")
+            return None
+    else:
+        print("⚠️ 需要安装 pandas 和 openpyxl 才能导出 Excel")
+        return None
+
 
 def trans_list2dict(trans_list):
     """
@@ -659,14 +808,31 @@ if __name__ == "__main__":
                     print("="*50)
             else:
                 print("⚠️ 未抽取到关系（可能文本中缺少关系关键词）")
+                extracted_relations = []
                 
         except Exception as e:
             print(f"⚠️ 关系抽取过程中出错: {e}")
             print("   将使用原有的共现统计方法")
             relation_matrix_enhanced = relations
+            extracted_relations = []
+    else:
+        extracted_relations = []
+    
+    ##### 导出关系到 Excel 表格
+    if use_relation and (relation_info or extracted_relations):
+        print("="*50)
+        print("开始导出人物关系到 Excel 表格...")
+        export_relations_to_excel(
+            relation_info=relation_info,
+            extracted_relations=extracted_relations,
+            names=names,
+            relations_matrix=relation_matrix_enhanced,
+            book_name=args.book,
+            save_path="output"
+        )
     
     ##### 展示最终结果和信息
-    # 传递书籍名称给 plot_rel 函数，用于生成带书籍名的文件名
-    plot_rel(relation_matrix_enhanced, names, book_name=args.book)
+    # 传递书籍名称和关系信息给 plot_rel 函数
+    plot_rel(relation_matrix_enhanced, names, book_name=args.book, relation_info=relation_info)
 
    

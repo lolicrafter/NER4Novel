@@ -137,7 +137,7 @@ jobs:
         # Install jpype1==0.7.0 first (official recommendation for pyhanlp)
         pip install jpype1==0.7.0
         # Install other dependencies
-        pip install tqdm numpy networkx matplotlib
+        pip install tqdm numpy networkx matplotlib pandas openpyxl
         # Install pyhanlp dependencies except JPype1
         pip install hanlp-downloader
         # Install pyhanlp without dependencies to keep JPype1==0.7.0
