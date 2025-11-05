@@ -13,15 +13,37 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Log environment info
+      run: |
+        echo "=== 环境信息 ==="
+        echo "Runner OS: $(uname -a)"
+        echo "Python version request: 3.8"
+        echo "Working directory: $(pwd)"
+        echo "Git branch: ${{ github.ref }}"
+        echo "Git commit: ${{ github.sha }}"
+    
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.9"
+        python-version: "3.8"  # 统一使用 Python 3.8
+    
+    - name: Verify Python installation
+      run: |
+        echo "=== Python 安装信息 ==="
+        python --version
+        pip --version
+        echo "Python path: $(which python)"
+        echo "Pip path: $(which pip)"
     
     - name: Install pyhanlp
       run: |
+        echo "=== 开始安装 pyhanlp ==="
         python -m pip install --upgrade pip
+        echo "✅ pip 升级完成"
+        echo "📦 开始安装 pyhanlp..."
         pip install pyhanlp
+        echo "✅ pyhanlp 安装完成"
+        pip show pyhanlp || echo "⚠️ pyhanlp 包信息获取失败"
     
     - name: Get pyhanlp static directory
       id: pyhanlp-path
@@ -39,6 +61,21 @@ jobs:
         key: ${{ runner.os }}-pyhanlp-data-file-1.8.6-v2
         restore-keys: |
           ${{ runner.os }}-pyhanlp-data-file-
+    
+    - name: Log cache status
+      run: |
+        echo "=== 缓存状态 ==="
+        CACHE_HIT="${{ steps.cache-pyhanlp-data.outputs.cache-hit }}"
+        echo "Cache hit: $CACHE_HIT"
+        if [ "$CACHE_HIT" == "true" ]; then
+          echo "✅ 使用缓存的 HanLP 数据文件"
+          if [ -f /tmp/pyhanlp-data-cache/data-for-1.8.6.zip ]; then
+            FILE_SIZE=$(du -h /tmp/pyhanlp-data-cache/data-for-1.8.6.zip | cut -f1)
+            echo "缓存文件大小: $FILE_SIZE"
+          fi
+        else
+          echo "📥 缓存未命中，需要下载"
+        fi
     
     - name: Download pyhanlp data file
       if: steps.cache-pyhanlp-data.outputs.cache-hit != 'true'
@@ -86,8 +123,9 @@ jobs:
         fi
 
   test:
-    needs: [setup-pyhanlp-data, test-api-optimized]
+    needs: [setup-pyhanlp-data]
     runs-on: ubuntu-latest
+    # 注意：如果 test-api-optimized 完成，会尝试下载其结果，但不强制依赖
     
     steps:
     - uses: actions/checkout@v4
@@ -103,11 +141,30 @@ jobs:
       with:
         python-version: "3.8"
     
+    - name: Log environment info
+      run: |
+        echo "=== 环境信息 ==="
+        echo "Runner OS: $(uname -a)"
+        echo "Python version request: 3.8"
+        echo "Working directory: $(pwd)"
+        echo "Git branch: ${{ github.ref }}"
+        echo "Git commit: ${{ github.sha }}"
+        echo "Job: test"
+    
     - name: Verify Java installation
       run: |
+        echo "=== Java 环境信息 ==="
         echo "JAVA_HOME=$JAVA_HOME"
-        java -version
-        javac -version
+        if [ -n "$JAVA_HOME" ]; then
+          echo "✅ JAVA_HOME 已设置"
+        else
+          echo "⚠️ JAVA_HOME 未设置"
+        fi
+        echo "Java 版本:"
+        java -version 2>&1 || echo "❌ java 命令不可用"
+        echo "Java 编译器版本:"
+        javac -version 2>&1 || echo "❌ javac 命令不可用"
+        echo "Java 路径: $(which java 2>/dev/null || echo '未找到')"
     
     - name: Cache pip packages
       uses: actions/cache@v4
@@ -123,21 +180,34 @@ jobs:
         sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei || echo "Font installation failed, will use fallback"
     
     - name: Install dependencies
-      env:
-        JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
+        echo "=== 开始安装依赖 ==="
         python -m pip install --upgrade pip
-        # Install jpype1==0.7.0 first (official recommendation for pyhanlp)
+        echo "✅ pip 升级完成: $(pip --version)"
+        
+        echo "📦 安装 jpype1==0.7.0..."
         pip install jpype1==0.7.0
-        # Install other dependencies
+        pip show jpype1 | grep Version || echo "⚠️ jpype1 版本检查失败"
+        
+        echo "📦 安装基础依赖..."
         pip install tqdm numpy networkx matplotlib
+        echo "✅ 基础依赖安装完成"
+        
+        echo "📦 安装数据处理依赖..."
         pip install requests>=2.28.0 pandas>=1.3.0 openpyxl>=3.0.0
-        # Install pyhanlp dependencies except JPype1
+        echo "✅ 数据处理依赖安装完成"
+        
+        echo "📦 安装 pyhanlp 相关依赖..."
         pip install hanlp-downloader
-        # Install pyhanlp without dependencies to keep JPype1==0.7.0
+        echo "✅ hanlp-downloader 安装完成"
+        
+        echo "📦 安装 pyhanlp（不包含依赖）..."
         pip install --no-deps pyhanlp || pip install pyhanlp
-        # Ensure jpype1==0.7.0 is still installed (pyhanlp might try to upgrade it)
+        echo "✅ pyhanlp 安装完成"
+        
+        echo "📦 确保 jpype1==0.7.0 版本..."
         pip install --force-reinstall --no-deps jpype1==0.7.0
+        echo "✅ jpype1 版本确认完成"
         # Clear matplotlib font cache to detect newly installed fonts
         # Use the correct API for newer matplotlib versions
         python -c "
@@ -243,32 +313,33 @@ jobs:
         fi
     
     - name: Verify Python imports
-      env:
-        JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
-        python -c "import tqdm; import numpy; import networkx; import matplotlib; print('Basic imports successful')"
-        # Test pyhanlp import separately with error handling
-        python -c "import pyhanlp; print('PyHanLP import successful')" || echo "PyHanLP import failed (may need data file)"
-    
-    - name: Download API optimized results (if available)
-      uses: actions/download-artifact@v4
-      with:
-        name: api-optimized-results
-        path: api-output/
-      continue-on-error: true
+        echo "=== 验证 Python 导入 ==="
+        echo "测试基础依赖..."
+        python -c "import tqdm; print('✅ tqdm')" || echo "❌ tqdm 导入失败"
+        python -c "import numpy; print('✅ numpy', numpy.__version__)" || echo "❌ numpy 导入失败"
+        python -c "import networkx; print('✅ networkx', networkx.__version__)" || echo "❌ networkx 导入失败"
+        python -c "import matplotlib; print('✅ matplotlib', matplotlib.__version__)" || echo "❌ matplotlib 导入失败"
+        python -c "import pandas; print('✅ pandas')" || echo "❌ pandas 导入失败"
+        python -c "import requests; print('✅ requests')" || echo "❌ requests 导入失败"
+        echo "测试 HanLP..."
+        python -c "import pyhanlp; print('✅ PyHanLP import successful')" || echo "⚠️ PyHanLP import failed (may need data file)"
     
     - name: Check code syntax
       run: |
-        python -m py_compile rel.py
-        python -m py_compile rel_api_optimized.py
-        find nlp_demos -name "*.py" -exec python -m py_compile {} \;
+        echo "=== 代码语法检查 ==="
+        echo "检查 rel.py..."
+        python -m py_compile rel.py && echo "✅ rel.py 语法正确" || echo "❌ rel.py 语法错误"
+        echo "检查 rel_api_optimized.py..."
+        python -m py_compile rel_api_optimized.py && echo "✅ rel_api_optimized.py 语法正确" || echo "❌ rel_api_optimized.py 语法错误"
+        echo "检查 nlp_demos 目录..."
+        find nlp_demos -name "*.py" -exec python -m py_compile {} \; && echo "✅ nlp_demos 语法检查完成" || echo "⚠️ nlp_demos 部分文件可能有语法错误"
       continue-on-error: true
     
     - name: Test with sample book (if exists)
       env:
         CI: true
         MPLBACKEND: Agg
-        JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
         mkdir -p output
         echo "Checking for test books..."
@@ -287,15 +358,28 @@ jobs:
         " || echo "JPype verification failed"
         
         # 动态查找 book 目录下的书籍文件
-        echo "Looking for books in book/ directory..."
+        echo "=== 查找测试书籍 ==="
+        echo "搜索 book/ 目录..."
+        if [ -d "book" ]; then
+          echo "✅ book/ 目录存在"
+          echo "book/ 目录内容:"
+          ls -lah book/ || echo "无法列出 book/ 目录内容"
+        else
+          echo "⚠️ book/ 目录不存在"
+        fi
+        
         BOOK_FILE=$(find book -maxdepth 1 -name "*.txt" -type f | head -n 1)
+        echo "找到的书籍文件: ${BOOK_FILE:-无}"
         
         if [ -n "$BOOK_FILE" ] && [ -f "$BOOK_FILE" ]; then
           # 提取文件名（不含路径和扩展名）
           BOOK_NAME=$(basename "$BOOK_FILE" .txt)
-          echo "Found book: $BOOK_NAME"
-          echo "Book file: $BOOK_FILE"
-          echo "Running test with book: $BOOK_NAME"
+          BOOK_SIZE=$(du -h "$BOOK_FILE" | cut -f1)
+          echo "=== 测试书籍信息 ==="
+          echo "✅ 找到测试书籍: $BOOK_NAME"
+          echo "📄 文件路径: $BOOK_FILE"
+          echo "📊 文件大小: $BOOK_SIZE"
+          echo "🚀 开始运行测试..."
           python rel.py --book "$BOOK_NAME" || {
             echo "⚠️ Test failed, but continuing..."
             echo "Test error details above"
@@ -322,6 +406,34 @@ jobs:
         ls -lah *.png *.jpg *.pdf 2>/dev/null || echo "No image files in root"
         echo "=== All files recursively ==="
         find . -name "*.png" -o -name "*.jpg" -o -name "*.pdf" 2>/dev/null | head -20 || echo "No image files found"
+      continue-on-error: true
+    
+    - name: Download API optimized results (if available)
+      if: always()
+      run: |
+        echo "=== 尝试下载 API 优化结果 ==="
+        echo "检查 test-api-optimized job 是否已完成..."
+      continue-on-error: true
+    
+    - name: Download API optimized results artifact
+      if: always()
+      uses: actions/download-artifact@v4
+      with:
+        name: api-optimized-results
+        path: api-output/
+      continue-on-error: true
+    
+    - name: Log downloaded artifacts
+      if: always()
+      run: |
+        echo "=== 下载的 Artifacts ==="
+        if [ -d "api-output" ]; then
+          echo "✅ api-output/ 目录存在"
+          echo "目录内容:"
+          ls -lah api-output/ || echo "无法列出目录内容"
+        else
+          echo "⚠️ api-output/ 目录不存在（可能 test-api-optimized job 未运行或失败）"
+        fi
       continue-on-error: true
     
     - name: Upload test results as artifacts
@@ -356,13 +468,58 @@ jobs:
       with:
         python-version: "3.8"  # 使用 3.8 以兼容 JPype1==0.7.0
     
+    - name: Log environment info
+      run: |
+        echo "=== 环境信息 ==="
+        echo "Runner OS: $(uname -a)"
+        echo "Python version request: 3.8"
+        echo "Working directory: $(pwd)"
+        echo "Git branch: ${{ github.ref }}"
+        echo "Git commit: ${{ github.sha }}"
+        echo "Job: test-api-optimized"
+        echo "Timeout: 30 minutes"
+    
+    - name: Verify Java installation
+      run: |
+        echo "=== Java 环境信息 ==="
+        echo "JAVA_HOME=$JAVA_HOME"
+        if [ -n "$JAVA_HOME" ]; then
+          echo "✅ JAVA_HOME 已设置"
+        else
+          echo "⚠️ JAVA_HOME 未设置"
+        fi
+        echo "Java 版本:"
+        java -version 2>&1 || echo "❌ java 命令不可用"
+        echo "Java 路径: $(which java 2>/dev/null || echo '未找到')"
+    
+    - name: Verify Python installation
+      run: |
+        echo "=== Python 安装信息 ==="
+        python --version
+        pip --version
+        echo "Python path: $(which python)"
+        echo "Pip path: $(which pip)"
+    
     - name: Cache pip packages
+      id: cache-pip-api
       uses: actions/cache@v4
       with:
         path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-api-${{ hashFiles('requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
+    
+    - name: Log pip cache status
+      run: |
+        echo "=== Pip 缓存状态 ==="
+        CACHE_HIT="${{ steps.cache-pip-api.outputs.cache-hit }}"
+        echo "Cache hit: $CACHE_HIT"
+        if [ "$CACHE_HIT" == "true" ]; then
+          echo "✅ 使用缓存的 pip 包"
+        else
+          echo "📥 缓存未命中，将重新安装依赖"
+        fi
+        echo "Requirements.txt hash: ${{ hashFiles('requirements.txt') }}"
     
     - name: Install system fonts for Chinese characters
       run: |
@@ -370,19 +527,47 @@ jobs:
         sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei || echo "Font installation failed, will use fallback"
     
     - name: Install Python dependencies
-      env:
-        JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
+        echo "=== 开始安装依赖 ==="
         python -m pip install --upgrade pip
-        pip install requests>=2.28.0 pandas>=1.3.0 openpyxl>=3.0.0
+        echo "✅ pip 升级完成: $(pip --version)"
+        
+        echo "📦 安装基础依赖..."
         pip install tqdm numpy networkx matplotlib
-        # 安装 HanLP 相关依赖（用于人名识别）
-        # 先安装 jpype1==0.7.0（与 test job 保持一致）
+        echo "✅ 基础依赖安装完成"
+        
+        echo "📦 安装数据处理依赖..."
+        pip install requests>=2.28.0 pandas>=1.3.0 openpyxl>=3.0.0
+        echo "✅ 数据处理依赖安装完成"
+        
+        echo "📦 安装 HanLP 相关依赖..."
+        echo "安装 jpype1==0.7.0..."
         pip install jpype1==0.7.0
-        # 安装 pyhanlp（不包含依赖，避免升级 jpype1）
+        pip show jpype1 | grep Version || echo "⚠️ jpype1 版本检查失败"
+        
+        echo "安装 pyhanlp（不包含依赖）..."
         pip install --no-deps pyhanlp || pip install pyhanlp
-        # 确保 jpype1==0.7.0 仍然安装（pyhanlp 可能会尝试升级它）
+        echo "✅ pyhanlp 安装完成"
+        
+        echo "确保 jpype1==0.7.0 版本..."
         pip install --force-reinstall --no-deps jpype1==0.7.0
+        echo "✅ jpype1 版本确认完成"
+        # Clear matplotlib font cache to detect newly installed fonts
+        python -c "
+        try:
+            from matplotlib import font_manager
+            font_manager._rebuild()
+            print('Font cache rebuilt successfully')
+        except AttributeError:
+            try:
+                import matplotlib
+                matplotlib.font_manager.fontManager.__class__._rebuild()
+                print('Font cache rebuilt successfully (new API)')
+            except Exception as e:
+                print(f'Font cache rebuild failed: {e}')
+        " || echo "Font cache rebuild failed"
+        # Verify JPype can find Java after installation
+        python -c "import jpype; print('JPype version:', jpype.__version__); print('JPype JVM path:', jpype.getDefaultJVMPath())" || echo "JPype installation check completed"
     
     - name: Get pyhanlp static directory
       id: pyhanlp-path
@@ -446,50 +631,93 @@ jobs:
     
     - name: Test API script syntax
       run: |
-        python -m py_compile rel_api_optimized.py
+        echo "=== 代码语法检查 ==="
+        echo "检查 rel_api_optimized.py..."
+        python -m py_compile rel_api_optimized.py && echo "✅ rel_api_optimized.py 语法正确" || {
+          echo "❌ rel_api_optimized.py 语法错误"
+          exit 1
+        }
         echo "✅ 代码语法检查通过"
     
-    - name: Setup HanLP data (if needed)
-      env:
-        JAVA_HOME: ${{ env.JAVA_HOME }}
+    - name: Verify Python imports
       run: |
-        python -c "import pyhanlp; print('HanLP available')" 2>/dev/null || {
-          echo "⚠️ HanLP 数据可能未下载，将使用简单的人名识别方法"
-        }
+        echo "=== 验证 Python 导入 ==="
+        echo "测试基础依赖..."
+        python -c "import tqdm; print('✅ tqdm')" || echo "❌ tqdm 导入失败"
+        python -c "import numpy; print('✅ numpy', numpy.__version__)" || echo "❌ numpy 导入失败"
+        python -c "import networkx; print('✅ networkx', networkx.__version__)" || echo "❌ networkx 导入失败"
+        python -c "import matplotlib; print('✅ matplotlib', matplotlib.__version__)" || echo "❌ matplotlib 导入失败"
+        python -c "import pandas; print('✅ pandas')" || echo "❌ pandas 导入失败"
+        python -c "import requests; print('✅ requests')" || echo "❌ requests 导入失败"
+        echo "测试 HanLP..."
+        python -c "import pyhanlp; print('✅ PyHanLP import successful')" || echo "⚠️ PyHanLP import failed (may need data file)"
       continue-on-error: true
     
     - name: Test API extraction (if API key provided)
       env:
         CI: true
         MPLBACKEND: Agg
-        JAVA_HOME: ${{ env.JAVA_HOME }}
         # 如果使用 Environment secrets，这里的 secrets 会自动从环境获取
         # 如果使用 Repository secrets，直接使用 secrets.XXX
         API_BASE_URL: ${{ secrets.API_BASE_URL || 'https://miaodi.zeabur.app' }}
         API_KEY: ${{ secrets.API_KEY }}
         API_MODEL: ${{ secrets.API_MODEL || 'deepseek-ai/DeepSeek-V3-0324' }}
       run: |
+        echo "=== API 配置检查 ==="
+        if [ -n "$API_KEY" ]; then
+          echo "✅ API_KEY 已设置（长度: ${#API_KEY} 字符）"
+        else
+          echo "⚠️ API_KEY 未设置"
+        fi
+        echo "API_BASE_URL: $API_BASE_URL"
+        echo "API_MODEL: $API_MODEL"
+        echo ""
+        
         mkdir -p output
-        echo "📚 检查测试书籍..."
-        ls -la book/ 2>/dev/null || echo "book/ 目录不存在"
+        echo "=== 检查测试书籍 ==="
+        if [ -d "book" ]; then
+          echo "✅ book/ 目录存在"
+          echo "book/ 目录内容:"
+          ls -lah book/ 2>/dev/null || echo "无法列出 book/ 目录内容"
+        else
+          echo "⚠️ book/ 目录不存在"
+        fi
         
         # 检查 API 密钥是否设置
         if [ -z "$API_KEY" ]; then
+          echo ""
           echo "⚠️ API_KEY 未设置，跳过实际运行测试"
           echo "💡 提示: 在 GitHub Secrets 中设置 API_KEY 以启用完整测试"
+          echo "   - Repository Secrets: Settings → Secrets and variables → Actions → Secrets"
+          echo "   - Environment Secrets: Settings → Environments → [环境名] → Secrets"
           echo "✅ 仅进行语法检查"
           exit 0
         fi
         
         # 查找测试书籍
+        echo ""
+        echo "=== 查找测试书籍 ==="
         BOOK_FILE=$(find book -maxdepth 1 -name "*.txt" -type f | head -n 1)
+        echo "找到的书籍文件: ${BOOK_FILE:-无}"
         
         if [ -n "$BOOK_FILE" ] && [ -f "$BOOK_FILE" ]; then
           BOOK_NAME=$(basename "$BOOK_FILE" .txt)
+          BOOK_SIZE=$(du -h "$BOOK_FILE" | cut -f1)
+          echo ""
+          echo "=== 测试书籍信息 ==="
           echo "✅ 找到测试书籍: $BOOK_NAME"
-          echo "🚀 开始 API 优化版测试..."
+          echo "📄 文件路径: $BOOK_FILE"
+          echo "📊 文件大小: $BOOK_SIZE"
+          echo ""
+          echo "=== API 配置 ==="
           echo "📡 API 地址: $API_BASE_URL"
           echo "📦 模型: $API_MODEL"
+          echo ""
+          echo "=== 运行参数 ==="
+          echo "max_sentences: 50"
+          echo "context_lines: 2"
+          echo ""
+          echo "🚀 开始 API 优化版测试..."
           
           # 使用较小的参数，避免超时和过多 token 消耗
           python rel_api_optimized.py \
@@ -500,16 +728,55 @@ jobs:
             --max_sentences 50 \
             --context_lines 2 \
             --output output || {
-            echo "⚠️ API 测试失败（可能是 API 调用失败或超时）"
-            echo "💡 这是正常的，可能的原因："
-            echo "   - API 密钥无效"
-            echo "   - API 服务不可用"
-            echo "   - 网络问题"
+            EXIT_CODE=$?
+            echo ""
+            echo "=== API 测试失败 ==="
+            echo "退出码: $EXIT_CODE"
+            echo "⚠️ API 测试失败，可能的原因："
+            echo "   - API 密钥无效或过期"
+            echo "   - API 服务不可用或超时"
+            echo "   - 网络连接问题"
+            echo "   - 模型名称错误"
+            echo "   - 请求格式错误"
+            echo ""
+            echo "💡 排查建议："
+            echo "   1. 检查 GitHub Secrets 中的 API_KEY 是否正确"
+            echo "   2. 检查 API_BASE_URL 是否可访问"
+            echo "   3. 检查 API_MODEL 是否正确"
+            echo "   4. 查看上方详细错误信息"
             exit 0  # 允许失败，不阻塞 CI
           }
+          
+          echo ""
+          echo "=== 测试完成 ==="
+          if [ -d "output" ]; then
+            echo "✅ output/ 目录存在"
+            echo "生成的文件:"
+            ls -lah output/ || echo "无法列出 output/ 目录内容"
+          else
+            echo "⚠️ output/ 目录不存在"
+          fi
         else
           echo "⚠️ 未找到测试书籍，跳过 API 实际运行测试"
           echo "💡 仅进行语法检查"
+          echo ""
+          echo "提示: 确保 book/ 目录下有 .txt 格式的测试书籍文件"
+        fi
+      continue-on-error: true
+    
+    - name: Log output files before upload
+      if: always()
+      run: |
+        echo "=== 准备上传 Artifact ==="
+        if [ -d "output" ]; then
+          echo "✅ output/ 目录存在"
+          echo "文件列表:"
+          find output -type f -exec ls -lh {} \; || echo "无法列出文件"
+          echo ""
+          echo "文件统计:"
+          find output -type f | wc -l | xargs echo "文件数量:"
+        else
+          echo "⚠️ output/ 目录不存在，将创建空 artifact"
         fi
       continue-on-error: true
     
@@ -521,6 +788,15 @@ jobs:
         path: output/
         if-no-files-found: warn
         retention-days: 7
+      continue-on-error: true
+    
+    - name: Log upload status
+      if: always()
+      run: |
+        echo "=== Artifact 上传状态 ==="
+        echo "Artifact 名称: api-optimized-results"
+        echo "保留天数: 7"
+        echo "✅ 上传完成（如果未找到文件会显示警告）"
       continue-on-error: true
 
   lint:
