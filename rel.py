@@ -14,6 +14,7 @@ if os.getenv('CI') == 'true' or os.getenv('DISPLAY') is None:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pyhanlp import *
+from relation_extractor import RelationExtractor
 
 
 
@@ -521,7 +522,9 @@ parser = argparse.ArgumentParser(description="指定书的名字")
 
 parser.add_argument("--book", default="weicheng", type=str,
                     help="书的名字，不带后缀")
-parser.add_argument("--debug",default=False,type=bool,help="控制中间结果的输出。默认关闭")
+parser.add_argument("--debug", action="store_true", help="控制中间结果的输出。默认关闭")
+parser.add_argument("--no-relation", action="store_true", help="禁用关系抽取（Hybrid方法）。默认开启关系抽取")
+parser.add_argument("--relation-weight", default=0.3, type=float, help="语义关系权重（0-1）。默认0.3")
 
 if __name__ == "__main__":
 
@@ -598,8 +601,72 @@ if __name__ == "__main__":
             rels, ns, trans=trans_dict, err=err_list, threshold=threshold)
     # print(names, np.diag(relations))
 
+    ##### 关系抽取（Hybrid方法）
+    relation_matrix_enhanced = relations.copy()
+    relation_info = {}
+    
+    use_relation = not args.no_relation
+    if use_relation:
+        print("="*50)
+        print("开始进行人物关系抽取（Hybrid方法）...")
+        try:
+            # 读取文本文件
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    text = f.read()
+            except UnicodeDecodeError:
+                with open(fp, "r", encoding="gbk") as f:
+                    text = f.read()
+            
+            # 初始化关系抽取器
+            extractor = RelationExtractor()
+            
+            # 提取关系
+            extracted_relations = extractor.extract_relations(text, list(names))
+            
+            if extracted_relations:
+                print(f"✅ 抽取到 {len(extracted_relations)} 条人物关系")
+                
+                # 构建语义关系矩阵
+                semantic_matrix, relation_info = extractor.build_relation_matrix(
+                    extracted_relations, list(names)
+                )
+                
+                # 合并共现矩阵和语义关系矩阵
+                relation_matrix_enhanced = extractor.merge_relation_matrices(
+                    relations, semantic_matrix, alpha=args.relation_weight
+                )
+                
+                print(f"✅ 关系矩阵已增强（语义关系权重: {args.relation_weight:.2f}）")
+                
+                # Debug 模式下输出关系详情
+                if args.debug:
+                    print("="*50)
+                    print("<<抽取的关系详情（前20条）>>")
+                    for i, rel in enumerate(extracted_relations[:20]):
+                        print(f"{i+1}. {rel['person1']} - [{rel['relation']}] - {rel['person2']} "
+                              f"(置信度: {rel['confidence']:.2f}, 方法: {rel['method']})")
+                    print("="*50)
+                    
+                    # 显示关系统计
+                    relation_types = {}
+                    for rel in extracted_relations:
+                        rel_type = rel['relation']
+                        relation_types[rel_type] = relation_types.get(rel_type, 0) + 1
+                    print("<<关系类型统计>>")
+                    for rel_type, count in sorted(relation_types.items(), key=lambda x: x[1], reverse=True):
+                        print(f"  {rel_type}: {count} 条")
+                    print("="*50)
+            else:
+                print("⚠️ 未抽取到关系（可能文本中缺少关系关键词）")
+                
+        except Exception as e:
+            print(f"⚠️ 关系抽取过程中出错: {e}")
+            print("   将使用原有的共现统计方法")
+            relation_matrix_enhanced = relations
+    
     ##### 展示最终结果和信息
     # 传递书籍名称给 plot_rel 函数，用于生成带书籍名的文件名
-    plot_rel(relations, names, book_name=args.book)
+    plot_rel(relation_matrix_enhanced, names, book_name=args.book)
 
    

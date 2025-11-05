@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master, develop, 'feature/**', 'fix/**' ]
   pull_request:
     branches: [ main, master, develop ]
   workflow_dispatch:
@@ -91,6 +91,13 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+    
+    - name: Show current branch and commit
+      run: |
+        echo "Current branch: ${{ github.ref_name }}"
+        echo "Current commit: ${{ github.sha }}"
+        git branch -a
+        git log -1 --oneline
     
     - name: Set up Java
       uses: actions/setup-java@v4
@@ -252,6 +259,7 @@ jobs:
     - name: Check code syntax
       run: |
         python -m py_compile rel.py
+        python -m py_compile relation_extractor.py
         find nlp_demos -name "*.py" -exec python -m py_compile {} \;
       continue-on-error: true
     
