@@ -264,11 +264,34 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
         rel = rel[indexes, :][:, indexes]
 
     # 去错
-    if len(err) != 0:
-        name_new = list(set(names)-set(err))  # 去错后的名字列表
+    # 自动过滤掉明显不是人名的字符（如省略号、标点符号等）
+    import re
+    # 检查名字是否只包含标点符号、空白字符或特殊符号（不包含汉字、字母、数字）
+    def is_invalid_name(name):
+        # 如果名字为空或只包含空白字符，直接返回 True
+        if not name or name.strip() == '':
+            return True
+        # 检查是否包含有效字符（汉字、字母、数字）
+        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', name):
+            return False
+        # 如果不包含任何有效字符，则认为是无效名字（只包含标点符号等）
+        return True
+    
+    auto_err_list = []
+    for name in names:
+        if is_invalid_name(name):
+            auto_err_list.append(name)
+    
+    # 合并手动错误列表和自动检测的错误列表
+    all_err_list = list(set(err + auto_err_list))
+    
+    if len(all_err_list) != 0:
+        name_new = list(set(names)-set(all_err_list))  # 去错后的名字列表
         indexes = [list(names).index(n) for n in name_new]
         names = np.array(name_new)
         rel = rel[indexes, :][:, indexes]
+        if len(auto_err_list) > 0:
+            print(f"✅ 自动过滤：删除了 {len(auto_err_list)} 个无效人名（标点符号等）: {sorted(auto_err_list)}")
 
     # 去重：如果一个较短的人名是另一个更长人名的子串，删除较短的人名
     # 例如："路青怜" 和 "路青" -> 保留 "路青怜"，删除 "路青"
