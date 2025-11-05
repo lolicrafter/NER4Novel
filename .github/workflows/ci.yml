@@ -101,7 +101,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.8"
     
     - name: Verify Java installation
       run: |
@@ -127,52 +127,34 @@ jobs:
         JAVA_HOME: ${{ env.JAVA_HOME }}
       run: |
         python -m pip install --upgrade pip
-        # Install JPype1 with specific version that includes jar files (1.4.1 is known to work with pyhanlp)
-        pip install --force-reinstall JPype1==1.4.1
-        # Install other dependencies (but skip JPype1 in requirements to keep our version)
-        pip install -r requirements.txt || pip install tqdm numpy networkx matplotlib pyhanlp
-        # Ensure JPype1==1.4.1 is still installed (pyhanlp might upgrade it)
-        pip install --force-reinstall --no-deps JPype1==1.4.1
+        # Install jpype1==0.7.0 first (official recommendation for pyhanlp)
+        pip install jpype1==0.7.0
+        # Install other dependencies
+        pip install tqdm numpy networkx matplotlib
+        # Install pyhanlp dependencies except JPype1
+        pip install hanlp-downloader
+        # Install pyhanlp without dependencies to keep JPype1==0.7.0
+        pip install --no-deps pyhanlp || pip install pyhanlp
+        # Ensure jpype1==0.7.0 is still installed (pyhanlp might try to upgrade it)
+        pip install --force-reinstall --no-deps jpype1==0.7.0
         # Clear matplotlib font cache to detect newly installed fonts
-        python -c "import matplotlib; matplotlib.font_manager._rebuild()" || echo "Font cache rebuild failed"
+        # Use the correct API for newer matplotlib versions
+        python -c "
+        try:
+            from matplotlib import font_manager
+            font_manager._rebuild()
+            print('Font cache rebuilt successfully')
+        except AttributeError:
+            try:
+                # For newer matplotlib versions
+                import matplotlib
+                matplotlib.font_manager.fontManager.__class__._rebuild()
+                print('Font cache rebuilt successfully (new API)')
+            except Exception as e:
+                print(f'Font cache rebuild failed: {e}')
+        " || echo "Font cache rebuild failed"
         # Verify JPype can find Java after installation
         python -c "import jpype; print('JPype version:', jpype.__version__); print('JPype JVM path:', jpype.getDefaultJVMPath())" || echo "JPype installation check completed"
-        # Verify JPype jar file location
-        python -c "
-        import jpype
-        import os
-        
-        jpype_dir = os.path.dirname(jpype.__file__)
-        print(f'JPype directory: {jpype_dir}')
-        print(f'JPype version: {jpype.__version__}')
-        
-        # Check multiple possible jar locations
-        possible_paths = [
-            os.path.join(jpype_dir, 'jars', 'jpype.jar'),
-            os.path.join(jpype_dir, 'jars', 'org.jpype.jar'),
-            os.path.join(jpype_dir, 'org.jpype.jar'),
-            os.path.join(jpype_dir, 'jpype.jar'),
-        ]
-        
-        found = False
-        for path in possible_paths:
-            exists = os.path.exists(path)
-            print(f'Checking: {path} -> {exists}')
-            if exists:
-                print(f'✅ Found jar at: {path}')
-                found = True
-        
-        # List jars directory if exists
-        jars_dir = os.path.join(jpype_dir, 'jars')
-        if os.path.exists(jars_dir):
-            print(f'Jars directory contents: {os.listdir(jars_dir)}')
-        else:
-            print('⚠️ Jars directory does not exist')
-        
-        if not found:
-            print('❌ ERROR: No JPype jar file found!')
-            print('This will cause RuntimeError: Can\\'t find org.jpype.jar support library')
-        " || echo "JPype jar check completed"
     
     - name: Get pyhanlp static directory
       id: pyhanlp-path
@@ -274,6 +256,7 @@ jobs:
       continue-on-error: true
     
     - name: Test with sample book (if exists)
+      id: test-book
       env:
         CI: true
         MPLBACKEND: Agg
@@ -293,17 +276,6 @@ jobs:
         print(f'JPype version: {jpype.__version__}')
         print(f'JAVA_HOME: {os.environ.get(\"JAVA_HOME\", \"not set\")}')
         print(f'JPype JVM path: {jpype.getDefaultJVMPath()}')
-        
-        # Check if jar file exists
-        jpype_dir = os.path.dirname(jpype.__file__)
-        jar_path = os.path.join(jpype_dir, 'jars', 'jpype.jar')
-        print(f'JPype jar path: {jar_path}')
-        print(f'JPype jar exists: {os.path.exists(jar_path)}')
-        
-        # List jar directory
-        jar_dir = os.path.join(jpype_dir, 'jars')
-        if os.path.exists(jar_dir):
-            print(f'Jars in directory: {os.listdir(jar_dir)}')
         " || echo "JPype verification failed"
         
         # 动态查找 book 目录下的书籍文件
@@ -316,6 +288,8 @@ jobs:
           echo "Found book: $BOOK_NAME"
           echo "Book file: $BOOK_FILE"
           echo "Running test with book: $BOOK_NAME"
+          # 将书名保存为 step output，供后续步骤使用
+          echo "book_name=$BOOK_NAME" >> $GITHUB_OUTPUT
           python rel.py --book "$BOOK_NAME" || {
             echo "⚠️ Test failed, but continuing..."
             echo "Test error details above"
@@ -324,6 +298,8 @@ jobs:
           echo "No test book found in book/ directory, skipping execution test"
           # 创建一个占位文件，确保 output 目录存在
           echo "No test output - book file not available" > output/README.txt
+          # 设置默认书名
+          echo "book_name=unknown" >> $GITHUB_OUTPUT
         fi
         
         # 列出所有生成的文件
@@ -348,7 +324,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-python-3.11
+        name: test-results-${{ steps.test-book.outputs.book_name }}
         path: |
           output/
         if-no-files-found: warn
