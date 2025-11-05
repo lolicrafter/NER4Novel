@@ -354,7 +354,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.9"
+        python-version: "3.8"  # 使用 3.8 以兼容 JPype1==0.7.0
     
     - name: Cache pip packages
       uses: actions/cache@v4
