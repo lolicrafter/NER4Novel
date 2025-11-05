@@ -420,23 +420,23 @@ def plot_rel(relations, names, draw_all=True, balanced=True, verbose=True, save_
         # 大量节点时：增大画布、减小字体、增大节点间距
         figsize = (32, 24)  # 从 (20, 16) 增大到 (32, 24)
         font_size = 6
-        node_size_multiplier = 50
+        node_size_multiplier = 20
         k_value = 3  # 用于 spring 布局的节点间距
     elif num_nodes > 30:
         # 中等节点时
         figsize = (24, 20)  # 从 (16, 14) 增大到 (24, 20)
         font_size = 8
-        node_size_multiplier = 80
+        node_size_multiplier = 40
         k_value = 2
     else:
         # 少量节点时
         figsize = (18, 15)  # 从 (12, 10) 增大到 (18, 15)
         font_size = 10
-        node_size_multiplier = 100
+        node_size_multiplier = 60
         k_value = 1
     
     # 调整节点大小（确保最小尺寸）
-    node_sizes = np.maximum(sub_nums * node_size_multiplier, 100)
+    node_sizes = np.maximum(sub_nums * node_size_multiplier, 50)
     
     #多种方式展示结果
     def spring_layout_func(G):
