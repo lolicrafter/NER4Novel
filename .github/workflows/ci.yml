@@ -274,6 +274,7 @@ jobs:
       continue-on-error: true
     
     - name: Test with sample book (if exists)
+      id: test-book
       env:
         CI: true
         MPLBACKEND: Agg
@@ -316,6 +317,8 @@ jobs:
           echo "Found book: $BOOK_NAME"
           echo "Book file: $BOOK_FILE"
           echo "Running test with book: $BOOK_NAME"
+          # 将书名保存为 step output，供后续步骤使用
+          echo "book_name=$BOOK_NAME" >> $GITHUB_OUTPUT
           python rel.py --book "$BOOK_NAME" || {
             echo "⚠️ Test failed, but continuing..."
             echo "Test error details above"
@@ -324,6 +327,8 @@ jobs:
           echo "No test book found in book/ directory, skipping execution test"
           # 创建一个占位文件，确保 output 目录存在
           echo "No test output - book file not available" > output/README.txt
+          # 设置默认书名
+          echo "book_name=unknown" >> $GITHUB_OUTPUT
         fi
         
         # 列出所有生成的文件
@@ -348,7 +353,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-python-3.11
+        name: test-results-${{ steps.test-book.outputs.book_name }}
         path: |
           output/
         if-no-files-found: warn
