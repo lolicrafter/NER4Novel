@@ -355,7 +355,7 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     rel = rel[indexes, :][:, indexes]
 
     # 限制最多显示60个人名（按出现频率从高到低）
-    MAX_NAMES = 80
+    MAX_NAMES = 60
     original_count = len(names)
     if len(names) > MAX_NAMES:
         names = names[:MAX_NAMES]
