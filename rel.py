@@ -385,52 +385,78 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     return rel, names
 
 
-def find_sentences_with_two_names(text_lines, names_list, max_sentences=200):
+def find_paragraphs_with_two_names(text_lines, names_list, context_lines=3, max_paragraphs_per_person=20):
     """
-    找出包含至少两个人名的句子
+    找出所有至少包含两个名字的段落，并根据人名限制段落数量
     
     Args:
         text_lines: 文本行列表
         names_list: 人名列表
-        max_sentences: 最多返回的句子数
+        context_lines: 段落上下文行数（前后各多少行）
+        max_paragraphs_per_person: 每个人名最多保留的段落数
     
     Returns:
-        sentences: [(sentence, person1, person2, line_index), ...]
+        paragraphs_data: [(paragraph, line_idx, found_names_list), ...]
     """
     # 构建人名匹配模式（按长度排序，优先匹配长名字）
     names_sorted = sorted(set(names_list), key=len, reverse=True)
     
-    sentences = []
-    sentence_pattern = r'[。！？；\n]+'
+    # 第一遍：找出所有包含至少两个人名的段落
+    all_paragraphs = []
+    seen_paragraphs = set()
     
-    for line_idx, line in enumerate(text_lines):
-        # 按句子分割
-        line_sentences = re.split(sentence_pattern, line)
+    for line_idx in range(len(text_lines)):
+        # 提取段落上下文
+        paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
         
-        for sentence in line_sentences:
-            sentence = sentence.strip()
-            if len(sentence) < 5:  # 跳过太短的句子
-                continue
-            
-            # 找出句子中出现的所有人名
-            found_names = []
-            for name in names_sorted:
-                if name in sentence:
-                    found_names.append(name)
-            
-            # 如果找到至少两个人名，记录下来
-            if len(found_names) >= 2:
-                # 记录所有可能的人名对
-                for i in range(len(found_names)):
-                    for j in range(i + 1, len(found_names)):
-                        person1, person2 = found_names[i], found_names[j]
-                        if person1 != person2:
-                            sentences.append((sentence, person1, person2, line_idx))
-                            
-                            if len(sentences) >= max_sentences:
-                                return sentences[:max_sentences]
+        # 去重：使用段落内容作为键
+        paragraph_key = hash(paragraph)
+        if paragraph_key in seen_paragraphs:
+            continue
+        seen_paragraphs.add(paragraph_key)
+        
+        # 找出段落中出现的所有人名
+        found_names = []
+        for name in names_sorted:
+            if name in paragraph:
+                found_names.append(name)
+        
+        # 如果找到至少两个人名，记录下来
+        if len(found_names) >= 2:
+            all_paragraphs.append((paragraph, line_idx, found_names))
     
-    return sentences
+    print(f"✅ 找到 {len(all_paragraphs)} 个包含至少两个人名的段落")
+    
+    # 第二遍：按人名限制段落数量，每个人最多保留 max_paragraphs_per_person 个段落
+    person_paragraph_count = defaultdict(int)  # 统计每个人名已经保留的段落数
+    selected_paragraphs = []
+    
+    # 按行号排序，保持顺序
+    all_paragraphs.sort(key=lambda x: x[1])
+    
+    for paragraph, line_idx, found_names in all_paragraphs:
+        # 检查这个段落中是否还有未达到上限的人名
+        can_add = False
+        for name in found_names:
+            if person_paragraph_count[name] < max_paragraphs_per_person:
+                can_add = True
+                break
+        
+        if can_add:
+            # 添加这个段落，并更新计数
+            selected_paragraphs.append((paragraph, line_idx, found_names))
+            for name in found_names:
+                person_paragraph_count[name] += 1
+    
+    print(f"✅ 限制后保留 {len(selected_paragraphs)} 个段落（每个人最多 {max_paragraphs_per_person} 个）")
+    
+    # 打印统计信息
+    print(f"\n📊 人名段落统计（前10个）:")
+    sorted_persons = sorted(person_paragraph_count.items(), key=lambda x: x[1], reverse=True)
+    for name, count in sorted_persons[:10]:
+        print(f"   {name}: {count} 个段落")
+    
+    return selected_paragraphs
 
 
 def extract_paragraph_context(text_lines, sentence_line_idx, context_lines=3):
@@ -487,37 +513,53 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
         print(f"❌ API 初始化失败: {e}")
         return [], set(names_list), []
     
-    # 阶段1: 找出包含两个人名的句子
-    print(f"\n🔍 阶段1: 找出包含至少两个人名的句子（最多 {max_sentences} 个）...")
-    sentences_with_names = find_sentences_with_two_names(
-        text_lines, names_list, max_sentences=max_sentences
+    # 阶段1: 找出所有包含至少两个人名的段落
+    print(f"\n🔍 阶段1: 找出所有包含至少两个人名的段落...")
+    paragraphs_with_names = find_paragraphs_with_two_names(
+        text_lines, names_list, context_lines=context_lines, max_paragraphs_per_person=20
     )
     
-    print(f"✅ 找到 {len(sentences_with_names)} 个包含两个人名的句子")
-    
-    if len(sentences_with_names) == 0:
-        print("⚠️ 未找到包含两个人名的句子")
+    if len(paragraphs_with_names) == 0:
+        print("⚠️ 未找到包含至少两个人名的段落")
         return [], set(names_list), []
     
-    # 阶段2: 提取段落上下文并去重
-    print(f"\n🔍 阶段2: 提取段落上下文...")
-    
-    seen_paragraphs = set()
+    # 准备段落数据用于导出 Excel
+    paragraphs_data_for_excel = []
     unique_paragraphs = []
-    paragraphs_data_for_excel = []  # 保存段落数据用于导出 Excel
     
-    for sentence, p1, p2, line_idx in sentences_with_names:
-        paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
-        paragraph_key = hash(paragraph)  # 使用 hash 去重
-        if paragraph_key not in seen_paragraphs:
-            seen_paragraphs.add(paragraph_key)
-            unique_paragraphs.append((paragraph, line_idx))
-            # 保存段落数据用于导出
-            paragraphs_data_for_excel.append((paragraph, line_idx, p1, p2, sentence))
+    for paragraph, line_idx, found_names in paragraphs_with_names:
+        unique_paragraphs.append((paragraph, line_idx))
+        
+        # 为 Excel 导出准备数据：列出所有可能的人名对
+        for i in range(len(found_names)):
+            for j in range(i + 1, len(found_names)):
+                person1, person2 = found_names[i], found_names[j]
+                if person1 != person2:
+                    # 提取段落中的句子（用于显示）
+                    sentence_pattern = r'[。！？；\n]+'
+                    sentences = re.split(sentence_pattern, paragraph)
+                    # 找到包含这两个人名的句子
+                    relevant_sentence = ""
+                    for sent in sentences:
+                        if person1 in sent and person2 in sent:
+                            relevant_sentence = sent.strip()
+                            break
+                    if not relevant_sentence and sentences:
+                        relevant_sentence = sentences[0].strip()[:100]  # 如果没有找到，使用第一句
+                    
+                    paragraphs_data_for_excel.append((paragraph, line_idx, person1, person2, relevant_sentence))
     
-    print(f"✅ 去重后共有 {len(unique_paragraphs)} 个唯一段落")
+    # 暂时关闭 LLM 分析，只导出段落数据
+    print(f"\n⚠️ LLM 分析已暂时关闭，仅导出段落数据用于检查")
+    print(f"✅ 准备导出 {len(paragraphs_data_for_excel)} 条段落记录到 Excel")
     
-    # 阶段3: 使用 LLM 分析段落
+    # 返回空关系列表，但保留段落数据
+    relationships = []
+    all_names = set(names_list)
+    
+    # 注释掉 LLM 分析部分
+    """
+    # 阶段3: 使用 LLM 分析段落（暂时关闭）
     print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
     
     # 构建提示词模板（注意：使用双花括号 {{ 和 }} 来转义 JSON 示例中的花括号）
@@ -541,9 +583,6 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
 
 请只返回 JSON 数组，不要包含其他解释文字。如果文本中没有人物关系，返回空数组 []。"""
 
-    relationships = []
-    all_names = set(names_list)
-    
     # 分批处理段落
     batch_size = 5  # 每批处理5个段落
     for i in tqdm(range(0, len(unique_paragraphs), batch_size), desc="分析段落"):
@@ -607,6 +646,7 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
             continue
     
     print(f"✅ 提取到 {len(relationships)} 个关系")
+    """
     
     return relationships, all_names, paragraphs_data_for_excel
 
@@ -1071,15 +1111,17 @@ if __name__ == "__main__":
                 context_lines=args.context_lines
             )
             
+            # 导出段落数据（无论是否有关系，因为LLM已关闭）
+            if PANDAS_AVAILABLE and paragraphs_data:
+                output_dir = "output"
+                os.makedirs(output_dir, exist_ok=True)
+                paragraphs_excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_找到的段落.xlsx")
+                export_paragraphs_to_excel(paragraphs_data, paragraphs_excel_path, args.book)
+            
             if len(relationships) == 0:
-                print("⚠️ LLM 未提取到任何关系，回退到共现统计方法")
+                print("⚠️ LLM 未提取到任何关系（LLM 分析已关闭）")
+                print("💡 段落数据已导出到 Excel，请检查内容是否正确")
                 use_llm = False
-                # 即使没有关系，也导出段落数据
-                if PANDAS_AVAILABLE and paragraphs_data:
-                    output_dir = "output"
-                    os.makedirs(output_dir, exist_ok=True)
-                    paragraphs_excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_找到的段落.xlsx")
-                    export_paragraphs_to_excel(paragraphs_data, paragraphs_excel_path, args.book)
             else:
                 # 构建关系矩阵
                 # 合并所有名字，优先使用 auto_name_list 中的顺序
@@ -1093,19 +1135,12 @@ if __name__ == "__main__":
                 
                 print(f"\n✅ LLM 分析完成，提取到 {len(relationships)} 个关系")
                 
-                # 导出 Excel（如果可用）
+                # 导出关系数据（如果可用）
                 if PANDAS_AVAILABLE:
                     output_dir = "output"
                     os.makedirs(output_dir, exist_ok=True)
-                    
-                    # 导出关系数据
                     excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_人物关系_LLM.xlsx")
                     export_llm_relationships_to_excel(relationships, names_list_sorted, excel_path, args.book)
-                    
-                    # 导出段落数据
-                    if paragraphs_data:
-                        paragraphs_excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_找到的段落.xlsx")
-                        export_paragraphs_to_excel(paragraphs_data, paragraphs_excel_path, args.book)
     
     if not use_llm:
         # 使用原有的共现统计方法
