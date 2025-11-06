@@ -4,6 +4,10 @@
 # date： 2019-06-26
 import argparse
 import os
+import re
+import json
+import time
+from collections import defaultdict
 
 from tqdm import tqdm
 import numpy as np
@@ -14,6 +18,22 @@ if os.getenv('CI') == 'true' or os.getenv('DISPLAY') is None:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pyhanlp import *
+
+# 尝试导入 OpenAI 库（用于调用 DeepSeek API）
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ openai 库未安装，LLM 分析功能不可用。安装方法: pip install openai")
+
+# 尝试导入 pandas（用于 Excel 导出）
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    print("⚠️ pandas 库未安装，Excel 导出功能不可用。安装方法: pip install pandas openpyxl")
 
 
 
@@ -365,6 +385,322 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     return rel, names
 
 
+def find_sentences_with_two_names(text_lines, names_list, max_sentences=200):
+    """
+    找出包含至少两个人名的句子
+    
+    Args:
+        text_lines: 文本行列表
+        names_list: 人名列表
+        max_sentences: 最多返回的句子数
+    
+    Returns:
+        sentences: [(sentence, person1, person2, line_index), ...]
+    """
+    # 构建人名匹配模式（按长度排序，优先匹配长名字）
+    names_sorted = sorted(set(names_list), key=len, reverse=True)
+    
+    sentences = []
+    sentence_pattern = r'[。！？；\n]+'
+    
+    for line_idx, line in enumerate(text_lines):
+        # 按句子分割
+        line_sentences = re.split(sentence_pattern, line)
+        
+        for sentence in line_sentences:
+            sentence = sentence.strip()
+            if len(sentence) < 5:  # 跳过太短的句子
+                continue
+            
+            # 找出句子中出现的所有人名
+            found_names = []
+            for name in names_sorted:
+                if name in sentence:
+                    found_names.append(name)
+            
+            # 如果找到至少两个人名，记录下来
+            if len(found_names) >= 2:
+                # 记录所有可能的人名对
+                for i in range(len(found_names)):
+                    for j in range(i + 1, len(found_names)):
+                        person1, person2 = found_names[i], found_names[j]
+                        if person1 != person2:
+                            sentences.append((sentence, person1, person2, line_idx))
+                            
+                            if len(sentences) >= max_sentences:
+                                return sentences[:max_sentences]
+    
+    return sentences
+
+
+def extract_paragraph_context(text_lines, sentence_line_idx, context_lines=3):
+    """
+    提取句子所在的段落上下文
+    
+    Args:
+        text_lines: 文本行列表
+        sentence_line_idx: 句子所在的行索引
+        context_lines: 上下文行数（前后各多少行）
+    
+    Returns:
+        paragraph: 段落文本
+    """
+    start_idx = max(0, sentence_line_idx - context_lines)
+    end_idx = min(len(text_lines), sentence_line_idx + context_lines + 1)
+    
+    paragraph = '\n'.join(text_lines[start_idx:end_idx])
+    return paragraph.strip()
+
+
+def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, model_name,
+                                   max_sentences=200, context_lines=3):
+    """
+    使用 LLM（DeepSeek）分析人物关系
+    
+    Args:
+        text_lines: 文本行列表
+        names_list: 人名列表
+        base_url: API 基础 URL（如 https://api.deepseek.com）
+        api_key: API 密钥
+        model_name: 模型名称（如 deepseek-reasoner 或 deepseek-chat）
+        max_sentences: 最多分析的句子数
+        context_lines: 段落上下文行数
+    
+    Returns:
+        relationships: [(person1, relation, person2, weight), ...]
+        all_names: 所有人名集合
+    """
+    if not OPENAI_AVAILABLE:
+        print("❌ OpenAI 库未安装，无法使用 LLM 分析")
+        return [], set(names_list)
+    
+    # 初始化 OpenAI 客户端（DeepSeek 兼容 OpenAI API）
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url.rstrip('/')
+        )
+        print(f"✅ 已连接到 DeepSeek API: {base_url}")
+        print(f"📦 使用模型: {model_name}")
+    except Exception as e:
+        print(f"❌ API 初始化失败: {e}")
+        return [], set(names_list)
+    
+    # 阶段1: 找出包含两个人名的句子
+    print(f"\n🔍 阶段1: 找出包含至少两个人名的句子（最多 {max_sentences} 个）...")
+    sentences_with_names = find_sentences_with_two_names(
+        text_lines, names_list, max_sentences=max_sentences
+    )
+    
+    print(f"✅ 找到 {len(sentences_with_names)} 个包含两个人名的句子")
+    
+    if len(sentences_with_names) == 0:
+        print("⚠️ 未找到包含两个人名的句子")
+        return [], set(names_list)
+    
+    # 阶段2: 提取段落上下文并去重
+    print(f"\n🔍 阶段2: 提取段落上下文...")
+    
+    seen_paragraphs = set()
+    unique_paragraphs = []
+    for sentence, p1, p2, line_idx in sentences_with_names:
+        paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
+        paragraph_key = hash(paragraph)  # 使用 hash 去重
+        if paragraph_key not in seen_paragraphs:
+            seen_paragraphs.add(paragraph_key)
+            unique_paragraphs.append((paragraph, line_idx))
+    
+    print(f"✅ 去重后共有 {len(unique_paragraphs)} 个唯一段落")
+    
+    # 阶段3: 使用 LLM 分析段落
+    print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
+    
+    # 构建提示词模板
+    prompt_template = """你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
+
+要求：
+1. 识别段落中出现的所有人物姓名
+2. 提取人物之间的关系（如：父子、朋友、恋人、同事、敌人、师生、主仆、兄弟、姐妹等）
+3. 如果关系不明确，使用"相关"作为关系类型
+4. 只提取明确出现的关系，不要推测
+
+输出格式为 JSON 数组，每个元素格式如下：
+{
+  "person1": "人物1",
+  "relation": "关系类型",
+  "person2": "人物2"
+}
+
+文本段落：
+{text}
+
+请只返回 JSON 数组，不要包含其他解释文字。如果文本中没有人物关系，返回空数组 []。"""
+
+    relationships = []
+    all_names = set(names_list)
+    
+    # 分批处理段落
+    batch_size = 5  # 每批处理5个段落
+    for i in tqdm(range(0, len(unique_paragraphs), batch_size), desc="分析段落"):
+        batch_paragraphs = unique_paragraphs[i:i+batch_size]
+        
+        # 合并多个段落为一个请求
+        combined_text = "\n\n---\n\n".join([p[0] for p in batch_paragraphs])
+        prompt = prompt_template.format(text=combined_text)
+        
+        try:
+            # 调用 DeepSeek API
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.3
+            )
+            
+            # 解析响应（处理 reasoning_content 字段）
+            message = response.choices[0].message
+            content = message.content
+            
+            # 如果使用 deepseek-reasoner，可能需要处理 reasoning_content
+            if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                # 只使用最终的 content，忽略思维链
+                pass
+            
+            # 提取 JSON 数组
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    relations = json.loads(json_str)
+                    for rel in relations:
+                        if isinstance(rel, dict) and 'person1' in rel and 'person2' in rel:
+                            person1 = rel['person1'].strip()
+                            person2 = rel['person2'].strip()
+                            relation = rel.get('relation', '相关').strip()
+                            
+                            # 过滤掉空名字
+                            if not person1 or not person2:
+                                continue
+                            
+                            # 添加人名到集合（允许 LLM 识别新的人名）
+                            all_names.add(person1)
+                            all_names.add(person2)
+                            
+                            # 记录关系（允许记录所有人名关系，不限制在原始列表中）
+                            relationships.append((person1, relation, person2, 1.0))
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ JSON 解析失败: {e}")
+                    print(f"   响应内容: {content[:200]}")
+            
+            # 避免请求过快
+            time.sleep(0.5)
+            
+        except Exception as e:
+            print(f"⚠️ API 调用失败: {e}")
+            continue
+    
+    print(f"✅ 提取到 {len(relationships)} 个关系")
+    
+    return relationships, all_names
+
+
+def build_relation_matrix_from_llm(relationships, names_list):
+    """
+    从 LLM 分析结果构建关系矩阵
+    
+    Args:
+        relationships: [(person1, relation, person2, weight), ...]
+        names_list: 所有人名列表
+    
+    Returns:
+        rel_matrix: 关系矩阵 (numpy array)
+        names_array: 人名数组 (numpy array)
+    """
+    # 创建人名到索引的映射
+    name_to_idx = {name: idx for idx, name in enumerate(names_list)}
+    n = len(names_list)
+    
+    # 初始化关系矩阵
+    rel_matrix = np.zeros((n, n))
+    
+    # 填充关系矩阵
+    for person1, relation, person2, weight in relationships:
+        if person1 in name_to_idx and person2 in name_to_idx:
+            idx1 = name_to_idx[person1]
+            idx2 = name_to_idx[person2]
+            # 关系矩阵是对称的
+            rel_matrix[idx1][idx2] = weight
+            rel_matrix[idx2][idx1] = weight
+    
+    # 对角线存储每个名字的出现次数（用于排序）
+    for i, name in enumerate(names_list):
+        # 统计该名字在关系中的出现次数
+        count = sum(1 for r in relationships if r[0] == name or r[2] == name)
+        rel_matrix[i][i] = count
+    
+    return rel_matrix, np.array(names_list)
+
+
+def export_llm_relationships_to_excel(relationships, names_list, file_path, book_name=None):
+    """
+    导出 LLM 分析的关系到 Excel 文件
+    
+    Args:
+        relationships: [(person1, relation, person2, weight), ...]
+        names_list: 所有人名列表
+        file_path: Excel 文件路径
+        book_name: 书名（用于文件名）
+    """
+    if not PANDAS_AVAILABLE:
+        print("⚠️ pandas 未安装，跳过 Excel 导出")
+        return
+    
+    try:
+        os.makedirs(os.path.dirname(file_path) if os.path.dirname(file_path) else ".", exist_ok=True)
+        
+        # 关系详情表
+        rel_data = []
+        for person1, relation, person2, weight in relationships:
+            rel_data.append({
+                "人物1": person1,
+                "关系": relation,
+                "人物2": person2,
+                "权重": weight
+            })
+        df_rel = pd.DataFrame(rel_data)
+        
+        # 人物统计表
+        entity_data = []
+        for name in names_list:
+            count = sum(1 for r in relationships if r[0] == name or r[2] == name)
+            entity_data.append({
+                "人物": name,
+                "关系数量": count
+            })
+        df_entity = pd.DataFrame(entity_data)
+        df_entity = df_entity.sort_values("关系数量", ascending=False)
+        
+        # 关系类型统计表
+        rel_type_counts = defaultdict(int)
+        for _, relation, _, _ in relationships:
+            rel_type_counts[relation] += 1
+        rel_type_data = [{"关系类型": k, "数量": v} 
+                        for k, v in sorted(rel_type_counts.items(), key=lambda x: x[1], reverse=True)]
+        df_rel_type = pd.DataFrame(rel_type_data)
+        
+        # 写入 Excel
+        with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            df_rel.to_excel(writer, sheet_name='关系详情', index=False)
+            df_entity.to_excel(writer, sheet_name='人物统计', index=False)
+            df_rel_type.to_excel(writer, sheet_name='关系类型统计', index=False)
+        
+        print(f"✅ 已导出 Excel 文件: {file_path}")
+    except Exception as e:
+        print(f"⚠️ Excel 导出失败: {e}")
+
+
 def sanitize_filename(filename):
     """清理文件名，移除或替换不允许的字符"""
     import re
@@ -545,6 +881,19 @@ parser = argparse.ArgumentParser(description="指定书的名字")
 parser.add_argument("--book", default="weicheng", type=str,
                     help="书的名字，不带后缀")
 parser.add_argument("--debug",default=False,type=bool,help="控制中间结果的输出。默认关闭")
+# LLM 分析相关参数（默认使用 LLM）
+parser.add_argument("--use_cooccurrence", action="store_true",
+                    help="使用共现统计方法，而不是 LLM 分析（默认使用 LLM）")
+parser.add_argument("--api_base_url", type=str, default=None,
+                    help="API 基础 URL（默认从环境变量 API_BASE_URL 读取，或使用 https://api.deepseek.com）")
+parser.add_argument("--api_key", type=str, default=None,
+                    help="API 密钥（默认从环境变量 API_KEY 读取）")
+parser.add_argument("--model", type=str, default=None,
+                    help="模型名称（默认从环境变量 API_MODEL 读取，或使用 deepseek-reasoner）")
+parser.add_argument("--max_sentences", type=int, default=200,
+                    help="最多分析的句子数（默认 200）")
+parser.add_argument("--context_lines", type=int, default=3,
+                    help="段落上下文行数（默认 3）")
 
 if __name__ == "__main__":
 
@@ -612,14 +961,89 @@ if __name__ == "__main__":
     ###############################################
     
     
-    ### 重新进行统计和计数
-    model = hanlp(custom_dict=True)#,analyzer="CRF")
-    rels,ns,_ = count_names(fp,model)
-  
-    ##### 根据手工调整以不同效果展示
-    relations, names = filter_names(
-            rels, ns, trans=trans_dict, err=err_list, threshold=threshold)
-    # print(names, np.diag(relations))
+    # 默认使用 LLM 分析，除非明确指定使用共现统计
+    use_llm = not args.use_cooccurrence
+    
+    if use_llm:
+        # 使用 LLM 分析（默认模式）
+        api_key = args.api_key or os.getenv('API_KEY')
+        api_base_url = args.api_base_url or os.getenv('API_BASE_URL', 'https://api.deepseek.com')
+        model_name = args.model or os.getenv('API_MODEL', 'deepseek-reasoner')
+        
+        if not api_key:
+            print("⚠️ 警告: 未提供 API 密钥，无法使用 LLM 分析")
+            print("   回退到共现统计方法")
+            print("   提示: 设置环境变量 API_KEY 或使用 --api_key 参数以启用 LLM 分析")
+            use_llm = False
+        
+        if use_llm:
+            print(f"\n{'='*60}")
+            print(f"使用 LLM 分析模式（默认）")
+            print(f"{'='*60}")
+        
+            # 读取文本文件
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    text_lines = [line.strip() for line in f.readlines() if line.strip()]
+            except UnicodeDecodeError:
+                with open(fp, "r", encoding="gbk") as f:
+                    text_lines = [line.strip() for line in f.readlines() if line.strip()]
+            
+            print(f"📖 文本文件: {fp}")
+            print(f"📝 总共有 {len(text_lines)} 行文本")
+            print(f"📡 API 地址: {api_base_url}")
+            print(f"📦 模型: {model_name}")
+            
+            # 使用高频名字列表进行 LLM 分析
+            print(f"\n📋 使用 {len(auto_name_list)} 个高频人名进行 LLM 分析")
+            
+            # 调用 LLM 分析函数
+            relationships, all_names = analyze_relationships_with_llm(
+                text_lines,
+                auto_name_list,
+                base_url=api_base_url,
+                api_key=api_key,
+                model_name=model_name,
+                max_sentences=args.max_sentences,
+                context_lines=args.context_lines
+            )
+            
+            if len(relationships) == 0:
+                print("⚠️ LLM 未提取到任何关系，回退到共现统计方法")
+                use_llm = False
+            else:
+                # 构建关系矩阵
+                # 合并所有名字，优先使用 auto_name_list 中的顺序
+                all_names_list = list(all_names)
+                # 先按 auto_name_list 的顺序排序，然后加上不在列表中的名字
+                names_in_list = [name for name in auto_name_list if name in all_names_list]
+                names_not_in_list = [name for name in all_names_list if name not in auto_name_list]
+                names_list_sorted = names_in_list + names_not_in_list
+                
+                relations, names = build_relation_matrix_from_llm(relationships, names_list_sorted)
+                
+                print(f"\n✅ LLM 分析完成，提取到 {len(relationships)} 个关系")
+                
+                # 导出 Excel（如果可用）
+                if PANDAS_AVAILABLE:
+                    output_dir = "output"
+                    os.makedirs(output_dir, exist_ok=True)
+                    excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_人物关系_LLM.xlsx")
+                    export_llm_relationships_to_excel(relationships, names_list_sorted, excel_path, args.book)
+    
+    if not use_llm:
+        # 使用原有的共现统计方法
+        print(f"\n{'='*60}")
+        print(f"使用共现统计模式")
+        print(f"{'='*60}")
+        
+        ### 重新进行统计和计数
+        model = hanlp(custom_dict=True)#,analyzer="CRF")
+        rels,ns,_ = count_names(fp,model)
+      
+        ##### 根据手工调整以不同效果展示
+        relations, names = filter_names(
+                rels, ns, trans=trans_dict, err=err_list, threshold=threshold)
 
     ##### 展示最终结果和信息
     # 传递书籍名称给 plot_rel 函数，用于生成带书籍名的文件名
