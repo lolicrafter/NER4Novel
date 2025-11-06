@@ -469,10 +469,11 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
     Returns:
         relationships: [(person1, relation, person2, weight), ...]
         all_names: 所有人名集合
+        paragraphs_data: [(paragraph, line_idx, person1, person2, sentence), ...] 段落数据列表
     """
     if not OPENAI_AVAILABLE:
         print("❌ OpenAI 库未安装，无法使用 LLM 分析")
-        return [], set(names_list)
+        return [], set(names_list), []
     
     # 初始化 OpenAI 客户端（DeepSeek 兼容 OpenAI API）
     try:
@@ -484,7 +485,7 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
         print(f"📦 使用模型: {model_name}")
     except Exception as e:
         print(f"❌ API 初始化失败: {e}")
-        return [], set(names_list)
+        return [], set(names_list), []
     
     # 阶段1: 找出包含两个人名的句子
     print(f"\n🔍 阶段1: 找出包含至少两个人名的句子（最多 {max_sentences} 个）...")
@@ -496,26 +497,30 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
     
     if len(sentences_with_names) == 0:
         print("⚠️ 未找到包含两个人名的句子")
-        return [], set(names_list)
+        return [], set(names_list), []
     
     # 阶段2: 提取段落上下文并去重
     print(f"\n🔍 阶段2: 提取段落上下文...")
     
     seen_paragraphs = set()
     unique_paragraphs = []
+    paragraphs_data_for_excel = []  # 保存段落数据用于导出 Excel
+    
     for sentence, p1, p2, line_idx in sentences_with_names:
         paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
         paragraph_key = hash(paragraph)  # 使用 hash 去重
         if paragraph_key not in seen_paragraphs:
             seen_paragraphs.add(paragraph_key)
             unique_paragraphs.append((paragraph, line_idx))
+            # 保存段落数据用于导出
+            paragraphs_data_for_excel.append((paragraph, line_idx, p1, p2, sentence))
     
     print(f"✅ 去重后共有 {len(unique_paragraphs)} 个唯一段落")
     
     # 阶段3: 使用 LLM 分析段落
     print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
     
-    # 构建提示词模板
+    # 构建提示词模板（注意：使用双花括号 {{ 和 }} 来转义 JSON 示例中的花括号）
     prompt_template = """你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
 
 要求：
@@ -525,11 +530,11 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
 4. 只提取明确出现的关系，不要推测
 
 输出格式为 JSON 数组，每个元素格式如下：
-{
+{{
   "person1": "人物1",
   "relation": "关系类型",
   "person2": "人物2"
-}
+}}
 
 文本段落：
 {text}
@@ -603,7 +608,7 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
     
     print(f"✅ 提取到 {len(relationships)} 个关系")
     
-    return relationships, all_names
+    return relationships, all_names, paragraphs_data_for_excel
 
 
 def build_relation_matrix_from_llm(relationships, names_list):
@@ -641,6 +646,63 @@ def build_relation_matrix_from_llm(relationships, names_list):
         rel_matrix[i][i] = count
     
     return rel_matrix, np.array(names_list)
+
+
+def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
+    """
+    导出找到的段落到 Excel 文件
+    
+    Args:
+        paragraphs_data: 段落数据列表，每个元素为 (paragraph, line_idx, person1, person2, sentence)
+        file_path: Excel 文件路径
+        book_name: 书名（用于文件名）
+    """
+    if not PANDAS_AVAILABLE:
+        print("⚠️ pandas 未安装，跳过段落导出")
+        return
+    
+    try:
+        os.makedirs(os.path.dirname(file_path) if os.path.dirname(file_path) else ".", exist_ok=True)
+        
+        # 整理段落数据
+        paragraph_records = []
+        for idx, (paragraph, line_idx, person1, person2, sentence) in enumerate(paragraphs_data, 1):
+            paragraph_records.append({
+                "序号": idx,
+                "行号": line_idx + 1,  # 转换为 1-based 行号
+                "人物1": person1,
+                "人物2": person2,
+                "包含的句子": sentence,
+                "段落内容": paragraph,
+                "段落长度": len(paragraph),
+                "句子长度": len(sentence)
+            })
+        
+        df_paragraphs = pd.DataFrame(paragraph_records)
+        
+        # 写入 Excel
+        with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            df_paragraphs.to_excel(writer, sheet_name='找到的段落', index=False)
+            
+            # 调整列宽（如果可能）
+            try:
+                worksheet = writer.sheets['找到的段落']
+                # 设置列宽
+                worksheet.column_dimensions['A'].width = 8   # 序号
+                worksheet.column_dimensions['B'].width = 10  # 行号
+                worksheet.column_dimensions['C'].width = 15  # 人物1
+                worksheet.column_dimensions['D'].width = 15  # 人物2
+                worksheet.column_dimensions['E'].width = 50  # 包含的句子
+                worksheet.column_dimensions['F'].width = 80  # 段落内容
+                worksheet.column_dimensions['G'].width = 12  # 段落长度
+                worksheet.column_dimensions['H'].width = 12  # 句子长度
+            except Exception:
+                pass  # 如果调整列宽失败，继续执行
+        
+        print(f"✅ 已导出段落到 Excel 文件: {file_path}")
+        print(f"   - 共 {len(paragraph_records)} 个段落")
+    except Exception as e:
+        print(f"⚠️ 段落 Excel 导出失败: {e}")
 
 
 def export_llm_relationships_to_excel(relationships, names_list, file_path, book_name=None):
@@ -998,7 +1060,8 @@ if __name__ == "__main__":
             print(f"\n📋 使用 {len(auto_name_list)} 个高频人名进行 LLM 分析")
             
             # 调用 LLM 分析函数
-            relationships, all_names = analyze_relationships_with_llm(
+            # 注意：需要在 analyze_relationships_with_llm 中返回段落数据
+            relationships, all_names, paragraphs_data = analyze_relationships_with_llm(
                 text_lines,
                 auto_name_list,
                 base_url=api_base_url,
@@ -1011,6 +1074,12 @@ if __name__ == "__main__":
             if len(relationships) == 0:
                 print("⚠️ LLM 未提取到任何关系，回退到共现统计方法")
                 use_llm = False
+                # 即使没有关系，也导出段落数据
+                if PANDAS_AVAILABLE and paragraphs_data:
+                    output_dir = "output"
+                    os.makedirs(output_dir, exist_ok=True)
+                    paragraphs_excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_找到的段落.xlsx")
+                    export_paragraphs_to_excel(paragraphs_data, paragraphs_excel_path, args.book)
             else:
                 # 构建关系矩阵
                 # 合并所有名字，优先使用 auto_name_list 中的顺序
@@ -1028,8 +1097,15 @@ if __name__ == "__main__":
                 if PANDAS_AVAILABLE:
                     output_dir = "output"
                     os.makedirs(output_dir, exist_ok=True)
+                    
+                    # 导出关系数据
                     excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_人物关系_LLM.xlsx")
                     export_llm_relationships_to_excel(relationships, names_list_sorted, excel_path, args.book)
+                    
+                    # 导出段落数据
+                    if paragraphs_data:
+                        paragraphs_excel_path = os.path.join(output_dir, f"{sanitize_filename(args.book)}_找到的段落.xlsx")
+                        export_paragraphs_to_excel(paragraphs_data, paragraphs_excel_path, args.book)
     
     if not use_llm:
         # 使用原有的共现统计方法
