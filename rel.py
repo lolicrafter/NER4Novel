@@ -812,6 +812,45 @@ def build_relation_matrix_from_llm(relationships, names_list):
     return rel_matrix, np.array(names_list)
 
 
+def has_overlapping_text(text1, text2, min_overlap=15):
+    """
+    检查两个文本是否有至少 min_overlap 个连续字符重叠
+    
+    Args:
+        text1: 第一个文本
+        text2: 第二个文本
+        min_overlap: 最小重叠字符数（默认15）
+    
+    Returns:
+        bool: 如果有重叠则返回 True，否则返回 False
+    """
+    if not text1 or not text2:
+        return False
+    
+    text1 = str(text1).strip()
+    text2 = str(text2).strip()
+    
+    # 如果其中一个文本长度小于最小重叠长度，直接比较是否相同
+    if len(text1) < min_overlap or len(text2) < min_overlap:
+        return text1 == text2
+    
+    # 检查 text1 是否包含 text2 的子串（至少 min_overlap 个字符）
+    # 或 text2 是否包含 text1 的子串
+    # 使用滑动窗口检查所有可能的子串
+    for i in range(len(text1) - min_overlap + 1):
+        substring = text1[i:i + min_overlap]
+        if substring in text2:
+            return True
+    
+    # 反向检查：text2 的子串是否在 text1 中
+    for i in range(len(text2) - min_overlap + 1):
+        substring = text2[i:i + min_overlap]
+        if substring in text1:
+            return True
+    
+    return False
+
+
 def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
     """
     导出找到的段落到 Excel 文件
@@ -830,18 +869,29 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
         
         # 整理段落数据并优化去重
         paragraph_records = []
-        # 使用句子内容作为唯一键，只保留每个唯一句子的第一次出现
-        seen_sentences = set()
+        # 存储已保留的句子，用于检查重叠
+        seen_sentences = []
         
         for idx, (paragraph, line_idx, person1, person2, sentence) in enumerate(paragraphs_data, 1):
-            # 使用句子内容作为去重键（去除首尾空格，统一处理）
-            sentence_key = str(sentence).strip() if sentence else ""
+            sentence_text = str(sentence).strip() if sentence else ""
             
-            # 如果这个句子已存在，跳过（只保留第一次出现）
-            if sentence_key in seen_sentences:
+            # 如果句子为空，跳过
+            if not sentence_text:
                 continue
             
-            seen_sentences.add(sentence_key)
+            # 检查是否与已保留的句子有重叠（15个连续字符）
+            is_duplicate = False
+            for seen_sentence in seen_sentences:
+                if has_overlapping_text(sentence_text, seen_sentence, min_overlap=15):
+                    is_duplicate = True
+                    break
+            
+            # 如果是重复句子，跳过（只保留第一次出现）
+            if is_duplicate:
+                continue
+            
+            # 记录这个句子
+            seen_sentences.append(sentence_text)
             
             paragraph_records.append({
                 "序号": len(paragraph_records) + 1,  # 使用实际记录数，而不是原始idx
@@ -861,7 +911,7 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
         print(f"📊 去重统计:")
         print(f"   - 原始记录数: {len(paragraphs_data)}")
         print(f"   - 原始唯一句子数: {unique_sentences_original}")
-        print(f"   - 去重后记录数: {len(paragraph_records)} (按句子去重，每个唯一句子只保留第一次出现)")
+        print(f"   - 去重后记录数: {len(paragraph_records)} (按句子去重：重叠≥15字的句子只保留第一次出现)")
         print(f"   - 唯一段落数: {unique_paragraphs}")
         if len(paragraph_records) > 0:
             print(f"   - 句子去重率: {(len(paragraphs_data) - len(paragraph_records)) / len(paragraphs_data) * 100:.1f}%")
