@@ -382,6 +382,8 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
         rel = rel[:MAX_NAMES, :][:, :MAX_NAMES]
         print(f"⚠️ 限制显示人数：保留前 {MAX_NAMES} 个高频人物（共 {original_count} 个）")
 
+    # 打印所有人名
+    print(f"所有人名: {names}")
     return rel, names
 
 
@@ -554,99 +556,100 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
     print(f"✅ 准备导出 {len(paragraphs_data_for_excel)} 条段落记录到 Excel")
     
     # 返回空关系列表，但保留段落数据
+    # LLM 分析已暂时关闭，只导出段落数据用于检查
     relationships = []
     all_names = set(names_list)
     
-    # 注释掉 LLM 分析部分
-    """
-    # 阶段3: 使用 LLM 分析段落（暂时关闭）
-    print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
-    
-    # 构建提示词模板（注意：使用双花括号 {{ 和 }} 来转义 JSON 示例中的花括号）
-    prompt_template = """你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
-
-要求：
-1. 识别段落中出现的所有人物姓名
-2. 提取人物之间的关系（如：父子、朋友、恋人、同事、敌人、师生、主仆、兄弟、姐妹等）
-3. 如果关系不明确，使用"相关"作为关系类型
-4. 只提取明确出现的关系，不要推测
-
-输出格式为 JSON 数组，每个元素格式如下：
-{{
-  "person1": "人物1",
-  "relation": "关系类型",
-  "person2": "人物2"
-}}
-
-文本段落：
-{text}
-
-请只返回 JSON 数组，不要包含其他解释文字。如果文本中没有人物关系，返回空数组 []。"""
-
-    # 分批处理段落
-    batch_size = 5  # 每批处理5个段落
-    for i in tqdm(range(0, len(unique_paragraphs), batch_size), desc="分析段落"):
-        batch_paragraphs = unique_paragraphs[i:i+batch_size]
-        
-        # 合并多个段落为一个请求
-        combined_text = "\n\n---\n\n".join([p[0] for p in batch_paragraphs])
-        prompt = prompt_template.format(text=combined_text)
-        
-        try:
-            # 调用 DeepSeek API
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=2000,
-                temperature=0.3
-            )
-            
-            # 解析响应（处理 reasoning_content 字段）
-            message = response.choices[0].message
-            content = message.content
-            
-            # 如果使用 deepseek-reasoner，可能需要处理 reasoning_content
-            if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                # 只使用最终的 content，忽略思维链
-                pass
-            
-            # 提取 JSON 数组
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                try:
-                    relations = json.loads(json_str)
-                    for rel in relations:
-                        if isinstance(rel, dict) and 'person1' in rel and 'person2' in rel:
-                            person1 = rel['person1'].strip()
-                            person2 = rel['person2'].strip()
-                            relation = rel.get('relation', '相关').strip()
-                            
-                            # 过滤掉空名字
-                            if not person1 or not person2:
-                                continue
-                            
-                            # 添加人名到集合（允许 LLM 识别新的人名）
-                            all_names.add(person1)
-                            all_names.add(person2)
-                            
-                            # 记录关系（允许记录所有人名关系，不限制在原始列表中）
-                            relationships.append((person1, relation, person2, 1.0))
-                except json.JSONDecodeError as e:
-                    print(f"⚠️ JSON 解析失败: {e}")
-                    print(f"   响应内容: {content[:200]}")
-            
-            # 避免请求过快
-            time.sleep(0.5)
-            
-        except Exception as e:
-            print(f"⚠️ API 调用失败: {e}")
-            continue
-    
-    print(f"✅ 提取到 {len(relationships)} 个关系")
-    """
+    # LLM 分析代码已暂时关闭，如需启用请取消注释以下代码
+    # 注意：取消注释时需要确保三引号字符串正确配对
+    # 
+    # # 阶段3: 使用 LLM 分析段落
+    # print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
+    # 
+    # # 构建提示词模板（注意：使用双花括号 {{ 和 }} 来转义 JSON 示例中的花括号）
+    # prompt_template = """你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
+    # 
+    # 要求：
+    # 1. 识别段落中出现的所有人物姓名
+    # 2. 提取人物之间的关系（如：父子、朋友、恋人、同事、敌人、师生、主仆、兄弟、姐妹等）
+    # 3. 如果关系不明确，使用"相关"作为关系类型
+    # 4. 只提取明确出现的关系，不要推测
+    # 
+    # 输出格式为 JSON 数组，每个元素格式如下：
+    # {{
+    #   "person1": "人物1",
+    #   "relation": "关系类型",
+    #   "person2": "人物2"
+    # }}
+    # 
+    # 文本段落：
+    # {text}
+    # 
+    # 请只返回 JSON 数组，不要包含其他解释文字。如果文本中没有人物关系，返回空数组 []。"""
+    # 
+    # # 分批处理段落
+    # batch_size = 5  # 每批处理5个段落
+    # for i in tqdm(range(0, len(unique_paragraphs), batch_size), desc="分析段落"):
+    #     batch_paragraphs = unique_paragraphs[i:i+batch_size]
+    #     
+    #     # 合并多个段落为一个请求
+    #     combined_text = "\n\n---\n\n".join([p[0] for p in batch_paragraphs])
+    #     prompt = prompt_template.format(text=combined_text)
+    #     
+    #     try:
+    #         # 调用 DeepSeek API
+    #         response = client.chat.completions.create(
+    #             model=model_name,
+    #             messages=[
+    #                 {"role": "user", "content": prompt}
+    #             ],
+    #             max_tokens=2000,
+    #             temperature=0.3
+    #         )
+    #         
+    #         # 解析响应（处理 reasoning_content 字段）
+    #         message = response.choices[0].message
+    #         content = message.content
+    #         
+    #         # 如果使用 deepseek-reasoner，可能需要处理 reasoning_content
+    #         if hasattr(message, 'reasoning_content') and message.reasoning_content:
+    #             # 只使用最终的 content，忽略思维链
+    #             pass
+    #         
+    #         # 提取 JSON 数组
+    #         json_match = re.search(r'\[.*\]', content, re.DOTALL)
+    #         if json_match:
+    #             json_str = json_match.group(0)
+    #             try:
+    #                 relations = json.loads(json_str)
+    #                 for rel in relations:
+    #                     if isinstance(rel, dict) and 'person1' in rel and 'person2' in rel:
+    #                         person1 = rel['person1'].strip()
+    #                         person2 = rel['person2'].strip()
+    #                         relation = rel.get('relation', '相关').strip()
+    #                         
+    #                         # 过滤掉空名字
+    #                         if not person1 or not person2:
+    #                             continue
+    #                         
+    #                         # 添加人名到集合（允许 LLM 识别新的人名）
+    #                         all_names.add(person1)
+    #                         all_names.add(person2)
+    #                         
+    #                         # 记录关系（允许记录所有人名关系，不限制在原始列表中）
+    #                         relationships.append((person1, relation, person2, 1.0))
+    #             except json.JSONDecodeError as e:
+    #                 print(f"⚠️ JSON 解析失败: {e}")
+    #                 print(f"   响应内容: {content[:200]}")
+    #         
+    #         # 避免请求过快
+    #         time.sleep(0.5)
+    #         
+    #     except Exception as e:
+    #         print(f"⚠️ API 调用失败: {e}")
+    #         continue
+    # 
+    # print(f"✅ 提取到 {len(relationships)} 个关系")
     
     return relationships, all_names, paragraphs_data_for_excel
 
