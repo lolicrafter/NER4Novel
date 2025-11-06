@@ -840,12 +840,14 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
             })
         
         # 进一步去重：如果同一段落内容有多个不同的人名对，保留所有，但统计去重情况
-        unique_paragraphs = len(set(p.strip() for _, _, _, _, p, _, _, _ in paragraphs_data))
+        # paragraphs_data 的格式是: (paragraph, line_idx, person1, person2, relevant_sentence)
+        unique_paragraphs = len(set(p.strip() for p, _, _, _, _ in paragraphs_data))
         print(f"📊 去重统计:")
         print(f"   - 原始记录数: {len(paragraphs_data)}")
         print(f"   - 去重后记录数: {len(paragraph_records)}")
         print(f"   - 唯一段落数: {unique_paragraphs}")
-        print(f"   - 平均每个段落包含 {len(paragraph_records) / max(unique_paragraphs, 1):.1f} 个人名对组合")
+        if unique_paragraphs > 0:
+            print(f"   - 平均每个段落包含 {len(paragraph_records) / unique_paragraphs:.1f} 个人名对组合")
         
         df_paragraphs = pd.DataFrame(paragraph_records)
         
