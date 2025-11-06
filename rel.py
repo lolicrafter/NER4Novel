@@ -594,6 +594,55 @@ def extract_paragraph_context(text_lines, sentence_line_idx, context_lines=3):
     return paragraph.strip()
 
 
+def load_relation_types(file_path="res/relation.txt"):
+    """
+    从文件加载关系类型列表
+    
+    Args:
+        file_path: 关系类型文件路径
+    
+    Returns:
+        dict: {关系大类: [关系小类列表], ...}
+        list: 所有关系类型的扁平列表
+    """
+    relation_categories = {}
+    all_relations = []
+    
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            
+            # 跳过表头（前2行）
+            for line in lines[2:]:
+                line = line.strip()
+                if not line or not line.startswith('|'):
+                    continue
+                
+                # 解析 Markdown 表格格式：|大类|小类1;小类2;小类3|
+                # 移除首尾的 |，然后按 | 分割
+                parts = [p.strip() for p in line.split('|') if p.strip()]
+                if len(parts) >= 2:
+                    category = parts[0]
+                    subcategories_str = parts[1]
+                    # 按分号分割子类别
+                    subcategories = [s.strip() for s in subcategories_str.split(';') if s.strip()]
+                    if category and subcategories:
+                        relation_categories[category] = subcategories
+                        all_relations.extend(subcategories)
+            
+            print(f"✅ 已加载 {len(relation_categories)} 个关系大类，共 {len(all_relations)} 个关系类型")
+        else:
+            print(f"⚠️ 关系类型文件不存在: {file_path}，使用默认关系类型")
+            # 使用默认关系类型
+            all_relations = ["父子", "朋友", "恋人", "同事", "敌人", "师生", "主仆", "兄弟", "姐妹", "相关"]
+    except Exception as e:
+        print(f"⚠️ 加载关系类型文件失败: {e}，使用默认关系类型")
+        all_relations = ["父子", "朋友", "恋人", "同事", "敌人", "师生", "主仆", "兄弟", "姐妹", "相关"]
+    
+    return relation_categories, all_relations
+
+
 def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, model_name,
                                    max_sentences=200, context_lines=3):
     """
@@ -677,17 +726,34 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
     # 阶段3: 使用 LLM 分析段落
     print(f"\n🔍 阶段3: 使用 LLM 分析段落中的人物关系...")
     
+    # 加载关系类型
+    relation_categories, all_relations = load_relation_types()
+    
     relationships = []
     all_names = set(names_list)
     
+    # 构建关系类型说明（用于 prompt）
+    relation_description = ""
+    if relation_categories:
+        relation_description = "可用关系类型包括以下类别及其子类型：\n"
+        for category, subcategories in relation_categories.items():
+            relation_description += f"- {category}：{', '.join(subcategories[:10])}"  # 只显示前10个
+            if len(subcategories) > 10:
+                relation_description += f" 等共{len(subcategories)}种"
+            relation_description += "\n"
+    else:
+        relation_description = "可用关系类型：父子、朋友、恋人、同事、敌人、师生、主仆、兄弟、姐妹、相关等。"
+    
     # 构建提示词模板（注意：使用双花括号 {{ 和 }} 来转义 JSON 示例中的花括号）
-    prompt_template = """你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
+    prompt_template = f"""你是一个专业的小说分析助手。请从以下文本段落中提取人物关系。
 
 要求：
 1. 识别段落中出现的所有人物姓名
-2. 提取人物之间的关系（如：父子、朋友、恋人、同事、敌人、师生、主仆、兄弟、姐妹等）
+2. 提取人物之间的关系，请从以下关系类型中选择最合适的：
+{relation_description}
 3. 如果关系不明确，使用"相关"作为关系类型
 4. 只提取明确出现的关系，不要推测
+5. 优先使用具体的关系类型（如"父亲"、"朋友"、"恋人"），而不是大类（如"家人"）
 
 输出格式为 JSON 数组，每个元素格式如下：
 {{
@@ -697,7 +763,7 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
 }}
 
 文本段落：
-{text}
+{{text}}
 
 请只返回 JSON 数组，不要包含其他解释文字。如果文本中没有人物关系，返回空数组 []。"""
     
