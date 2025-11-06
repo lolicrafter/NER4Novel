@@ -387,6 +387,64 @@ def filter_names(rel, names, trans={}, err=[], threshold= -1):
     return rel, names
 
 
+def extract_relevant_sentence(sentences, person1, person2):
+    """
+    从句子列表中提取最相关的句子
+    
+    优先级：
+    1. 同时包含两个人名的句子
+    2. 分别包含两个人名的两个句子（拼接）
+    3. 包含人名数量最多的句子
+    4. 第一个句子
+    """
+    if not sentences:
+        return ""
+    
+    # 1. 优先找同时包含两个人名的句子
+    for sent in sentences:
+        if person1 in sent and person2 in sent:
+            return sent
+    
+    # 2. 找分别包含两个人名的句子，拼接起来
+    sent1 = None
+    sent2 = None
+    for sent in sentences:
+        if person1 in sent and not sent1:
+            sent1 = sent
+        if person2 in sent and not sent2:
+            sent2 = sent
+        if sent1 and sent2:
+            # 如果两个句子相邻，拼接；否则返回包含人名最多的那个
+            idx1 = sentences.index(sent1)
+            idx2 = sentences.index(sent2)
+            if abs(idx1 - idx2) <= 1:  # 相邻句子
+                return f"{sent1}。{sent2}"
+            else:
+                # 返回包含两个人名最近的那个句子
+                return sent1 if len(sent1) >= len(sent2) else sent2
+    
+    # 3. 如果只找到一个，返回那个
+    if sent1:
+        return sent1
+    if sent2:
+        return sent2
+    
+    # 4. 找包含人名数量最多的句子（至少包含一个人名）
+    best_sentence = ""
+    max_name_count = 0
+    for sent in sentences:
+        name_count = sum(1 for name in [person1, person2] if name in sent)
+        if name_count > max_name_count:
+            max_name_count = name_count
+            best_sentence = sent
+    
+    # 5. 如果都没找到，返回第一个句子（限制长度）
+    if not best_sentence and sentences:
+        best_sentence = sentences[0][:100]
+    
+    return best_sentence
+
+
 def find_paragraphs_with_two_names(text_lines, names_list, context_lines=3, max_paragraphs_per_person=20):
     """
     找出所有至少包含两个名字的段落，并根据人名限制段落数量
@@ -565,39 +623,36 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
         print("⚠️ 未找到包含至少两个人名的段落")
         return [], set(names_list), []
     
-    # 准备段落数据用于导出 Excel（进一步去重）
+    # 准备段落数据用于导出 Excel
     paragraphs_data_for_excel = []
     unique_paragraphs = []
     
-    # 用于记录已导出的段落，避免重复
-    exported_paragraphs = set()
+    # 用于记录已处理的段落+人名对组合，避免完全重复
+    seen_combinations = set()
     
     for paragraph, line_idx, found_names in paragraphs_with_names:
         unique_paragraphs.append((paragraph, line_idx))
         
-        # 为 Excel 导出准备数据：列出所有可能的人名对
-        # 但每个段落只导出一次（基于段落内容）
-        paragraph_text = paragraph.strip()
-        if paragraph_text in exported_paragraphs:
-            continue  # 跳过重复段落
-        exported_paragraphs.add(paragraph_text)
+        # 提取段落中的所有句子（用于后续匹配，只提取一次）
+        sentence_pattern = r'[。！？；\n]+'
+        sentences = [s.strip() for s in re.split(sentence_pattern, paragraph) if s.strip()]
         
         # 为每个人名对创建一条记录
         for i in range(len(found_names)):
             for j in range(i + 1, len(found_names)):
                 person1, person2 = found_names[i], found_names[j]
                 if person1 != person2:
-                    # 提取段落中的句子（用于显示）
-                    sentence_pattern = r'[。！？；\n]+'
-                    sentences = re.split(sentence_pattern, paragraph)
-                    # 找到包含这两个人名的句子
-                    relevant_sentence = ""
-                    for sent in sentences:
-                        if person1 in sent and person2 in sent:
-                            relevant_sentence = sent.strip()
-                            break
-                    if not relevant_sentence and sentences:
-                        relevant_sentence = sentences[0].strip()[:100]  # 如果没有找到，使用第一句
+                    # 确保人名对顺序一致（避免 A-B 和 B-A 重复）
+                    person_pair = tuple(sorted([person1, person2]))
+                    combination_key = (paragraph.strip(), person_pair)
+                    
+                    # 如果这个段落+人名对组合已处理过，跳过
+                    if combination_key in seen_combinations:
+                        continue
+                    seen_combinations.add(combination_key)
+                    
+                    # 优化句子提取逻辑
+                    relevant_sentence = extract_relevant_sentence(sentences, person1, person2)
                     
                     paragraphs_data_for_excel.append((paragraph, line_idx, person1, person2, relevant_sentence))
     
@@ -757,20 +812,21 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
     try:
         os.makedirs(os.path.dirname(file_path) if os.path.dirname(file_path) else ".", exist_ok=True)
         
-        # 整理段落数据并去重
+        # 整理段落数据并优化去重
         paragraph_records = []
-        seen_paragraphs = set()  # 用于去重段落内容
+        # 使用 (段落内容, 人物1, 人物2) 作为唯一键，避免同一段落同一人名对重复
+        seen_paragraph_pairs = set()
         
         for idx, (paragraph, line_idx, person1, person2, sentence) in enumerate(paragraphs_data, 1):
-            # 使用段落内容作为唯一键进行去重
-            paragraph_key = paragraph.strip()
+            # 确保人物1和人物2的顺序一致（按字母顺序排序，避免重复）
+            person_pair = tuple(sorted([person1, person2]))
+            paragraph_key = (paragraph.strip(), person_pair)
             
-            # 如果段落已存在，合并人名对信息（但不在Excel中重复显示）
-            # 为了简化，我们只保留第一次出现的段落
-            if paragraph_key in seen_paragraphs:
-                continue  # 跳过重复段落
+            # 如果这个段落+人名对组合已存在，跳过
+            if paragraph_key in seen_paragraph_pairs:
+                continue
             
-            seen_paragraphs.add(paragraph_key)
+            seen_paragraph_pairs.add(paragraph_key)
             
             paragraph_records.append({
                 "序号": len(paragraph_records) + 1,  # 使用实际记录数，而不是原始idx
@@ -780,10 +836,16 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
                 "包含的句子": sentence,
                 "段落内容": paragraph,
                 "段落长度": len(paragraph),
-                "句子长度": len(sentence)
+                "句子长度": len(sentence) if sentence else 0
             })
         
-        print(f"📊 去重后保留 {len(paragraph_records)} 条唯一段落记录（原始 {len(paragraphs_data)} 条）")
+        # 进一步去重：如果同一段落内容有多个不同的人名对，保留所有，但统计去重情况
+        unique_paragraphs = len(set(p.strip() for _, _, _, _, p, _, _, _ in paragraphs_data))
+        print(f"📊 去重统计:")
+        print(f"   - 原始记录数: {len(paragraphs_data)}")
+        print(f"   - 去重后记录数: {len(paragraph_records)}")
+        print(f"   - 唯一段落数: {unique_paragraphs}")
+        print(f"   - 平均每个段落包含 {len(paragraph_records) / max(unique_paragraphs, 1):.1f} 个人名对组合")
         
         df_paragraphs = pd.DataFrame(paragraph_records)
         
