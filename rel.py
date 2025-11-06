@@ -431,30 +431,34 @@ def find_paragraphs_with_two_names(text_lines, names_list, context_lines=3, max_
     
     # 第一遍：找出所有包含至少两个人名的段落
     all_paragraphs = []
-    seen_paragraphs = set()
     
     # 使用更精确的去重方式：存储段落内容本身，而不是hash（hash可能冲突）
     seen_paragraph_texts = set()
+    
+    # 为了进一步去重，记录每个段落的唯一标识（基于内容和行号范围）
+    seen_paragraph_keys = set()
     
     for line_idx in range(len(text_lines)):
         # 提取段落上下文
         paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
         
-        # 去重：使用段落内容本身作为键（避免hash冲突）
+        # 去重方式1：使用段落内容本身作为键（避免hash冲突）
         if paragraph in seen_paragraph_texts:
             continue
+        
+        # 去重方式2：使用段落内容+行号范围作为唯一键（避免相邻行产生的重复段落）
+        paragraph_key = (paragraph, line_idx // (context_lines * 2 + 1))  # 按段落区域分组
+        if paragraph_key in seen_paragraph_keys:
+            continue
+        
         seen_paragraph_texts.add(paragraph)
+        seen_paragraph_keys.add(paragraph_key)
         
         # 找出段落中出现的所有人名（使用精确匹配，避免子串误匹配）
         found_names = []
         for name in names_sorted:
             # 使用更精确的匹配：确保是完整词匹配，而不是子串匹配
             # 检查 name 是否作为独立词出现在段落中
-            import re
-            # 使用单词边界匹配，但中文没有空格，所以用前后非中文字符或字符串边界
-            pattern = re.escape(name)
-            # 匹配：字符串开头、字符串结尾、或前后是非中文字符
-            # 但中文名字可能连在一起，所以简单检查即可，主要依靠顺序匹配
             if name in paragraph:
                 # 进一步检查：确保不是其他名字的一部分（已通过排序避免）
                 found_names.append(name)
@@ -561,14 +565,24 @@ def analyze_relationships_with_llm(text_lines, names_list, base_url, api_key, mo
         print("⚠️ 未找到包含至少两个人名的段落")
         return [], set(names_list), []
     
-    # 准备段落数据用于导出 Excel
+    # 准备段落数据用于导出 Excel（进一步去重）
     paragraphs_data_for_excel = []
     unique_paragraphs = []
+    
+    # 用于记录已导出的段落，避免重复
+    exported_paragraphs = set()
     
     for paragraph, line_idx, found_names in paragraphs_with_names:
         unique_paragraphs.append((paragraph, line_idx))
         
         # 为 Excel 导出准备数据：列出所有可能的人名对
+        # 但每个段落只导出一次（基于段落内容）
+        paragraph_text = paragraph.strip()
+        if paragraph_text in exported_paragraphs:
+            continue  # 跳过重复段落
+        exported_paragraphs.add(paragraph_text)
+        
+        # 为每个人名对创建一条记录
         for i in range(len(found_names)):
             for j in range(i + 1, len(found_names)):
                 person1, person2 = found_names[i], found_names[j]
@@ -743,11 +757,23 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
     try:
         os.makedirs(os.path.dirname(file_path) if os.path.dirname(file_path) else ".", exist_ok=True)
         
-        # 整理段落数据
+        # 整理段落数据并去重
         paragraph_records = []
+        seen_paragraphs = set()  # 用于去重段落内容
+        
         for idx, (paragraph, line_idx, person1, person2, sentence) in enumerate(paragraphs_data, 1):
+            # 使用段落内容作为唯一键进行去重
+            paragraph_key = paragraph.strip()
+            
+            # 如果段落已存在，合并人名对信息（但不在Excel中重复显示）
+            # 为了简化，我们只保留第一次出现的段落
+            if paragraph_key in seen_paragraphs:
+                continue  # 跳过重复段落
+            
+            seen_paragraphs.add(paragraph_key)
+            
             paragraph_records.append({
-                "序号": idx,
+                "序号": len(paragraph_records) + 1,  # 使用实际记录数，而不是原始idx
                 "行号": line_idx + 1,  # 转换为 1-based 行号
                 "人物1": person1,
                 "人物2": person2,
@@ -756,6 +782,8 @@ def export_paragraphs_to_excel(paragraphs_data, file_path, book_name=None):
                 "段落长度": len(paragraph),
                 "句子长度": len(sentence)
             })
+        
+        print(f"📊 去重后保留 {len(paragraph_records)} 条唯一段落记录（原始 {len(paragraphs_data)} 条）")
         
         df_paragraphs = pd.DataFrame(paragraph_records)
         
@@ -1120,8 +1148,26 @@ if __name__ == "__main__":
     
     # 获取最终的人名列表（用于段落查找）
     final_names_list = list(names_cooccurrence)
-    print(f"\n✅ 共现统计完成，得到 {len(final_names_list)} 个最终人名")
+    
+    # 过滤掉明显不是人名的词
+    def filter_non_person_names(names):
+        """过滤掉明显不是人名的词"""
+        # 明显不是人名的词列表
+        exclude_words = {
+            '闻言', '披萨', '福克斯', '王',  # 明显不是人名
+            '的', '了', '是', '在', '有', '和', '就', '不', '人', '都', '一',  # 常见词
+            '这个', '那个', '什么', '怎么', '为什么', '可以', '不能'
+        }
+        filtered = [name for name in names if name not in exclude_words]
+        return filtered
+    
+    # 过滤非人名
+    final_names_list = filter_non_person_names(final_names_list)
+    print(f"\n✅ 共现统计完成，得到 {len(final_names_list)} 个最终人名（已过滤非人名）")
     print(f"   人名列表: {final_names_list}")
+    if len(names_cooccurrence) != len(final_names_list):
+        removed = set(names_cooccurrence) - set(final_names_list)
+        print(f"   已排除的非人名: {sorted(removed)}")
     
     if use_llm:
         # 使用 LLM 分析（默认模式）
