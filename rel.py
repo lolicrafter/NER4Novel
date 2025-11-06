@@ -393,34 +393,70 @@ def find_paragraphs_with_two_names(text_lines, names_list, context_lines=3, max_
     
     Args:
         text_lines: 文本行列表
-        names_list: 人名列表
+        names_list: 人名列表（应该是最终过滤后的人名，避免子串重复）
         context_lines: 段落上下文行数（前后各多少行）
         max_paragraphs_per_person: 每个人名最多保留的段落数
     
     Returns:
         paragraphs_data: [(paragraph, line_idx, found_names_list), ...]
     """
+    # 过滤掉子串人名：如果短名字是长名字的子串，且在同一人名列表中，只保留长名字
+    def filter_substring_names(names):
+        """过滤掉是其他名字子串的名字"""
+        names_unique = list(set(names))
+        names_sorted = sorted(names_unique, key=len, reverse=True)
+        filtered = []
+        
+        for name in names_sorted:
+            # 检查这个名字是否是已保留名字的子串
+            is_substring = False
+            for kept_name in filtered:
+                if name in kept_name and name != kept_name:
+                    is_substring = True
+                    break
+            if not is_substring:
+                filtered.append(name)
+        
+        return filtered
+    
+    # 过滤子串人名
+    names_filtered = filter_substring_names(names_list)
+    print(f"📋 过滤子串人名: {len(names_list)} -> {len(names_filtered)} 个")
+    if len(names_list) != len(names_filtered):
+        removed = set(names_list) - set(names_filtered)
+        print(f"   移除的子串人名: {sorted(removed)}")
+    
     # 构建人名匹配模式（按长度排序，优先匹配长名字）
-    names_sorted = sorted(set(names_list), key=len, reverse=True)
+    names_sorted = sorted(names_filtered, key=len, reverse=True)
     
     # 第一遍：找出所有包含至少两个人名的段落
     all_paragraphs = []
     seen_paragraphs = set()
     
+    # 使用更精确的去重方式：存储段落内容本身，而不是hash（hash可能冲突）
+    seen_paragraph_texts = set()
+    
     for line_idx in range(len(text_lines)):
         # 提取段落上下文
         paragraph = extract_paragraph_context(text_lines, line_idx, context_lines)
         
-        # 去重：使用段落内容作为键
-        paragraph_key = hash(paragraph)
-        if paragraph_key in seen_paragraphs:
+        # 去重：使用段落内容本身作为键（避免hash冲突）
+        if paragraph in seen_paragraph_texts:
             continue
-        seen_paragraphs.add(paragraph_key)
+        seen_paragraph_texts.add(paragraph)
         
-        # 找出段落中出现的所有人名
+        # 找出段落中出现的所有人名（使用精确匹配，避免子串误匹配）
         found_names = []
         for name in names_sorted:
+            # 使用更精确的匹配：确保是完整词匹配，而不是子串匹配
+            # 检查 name 是否作为独立词出现在段落中
+            import re
+            # 使用单词边界匹配，但中文没有空格，所以用前后非中文字符或字符串边界
+            pattern = re.escape(name)
+            # 匹配：字符串开头、字符串结尾、或前后是非中文字符
+            # 但中文名字可能连在一起，所以简单检查即可，主要依靠顺序匹配
             if name in paragraph:
+                # 进一步检查：确保不是其他名字的一部分（已通过排序避免）
                 found_names.append(name)
         
         # 如果找到至少两个人名，记录下来
@@ -1069,6 +1105,24 @@ if __name__ == "__main__":
     # 默认使用 LLM 分析，除非明确指定使用共现统计
     use_llm = not args.use_cooccurrence
     
+    # 先进行共现统计，获取最终过滤后的人名列表（用于段落查找）
+    print(f"\n{'='*60}")
+    print(f"第一步：共现统计（获取最终人名列表）")
+    print(f"{'='*60}")
+    
+    ### 重新进行统计和计数（使用已添加的字典）
+    model = hanlp(custom_dict=True)#,analyzer="CRF")
+    rels,ns,_ = count_names(fp,model)
+  
+    ##### 根据手工调整以不同效果展示
+    relations_cooccurrence, names_cooccurrence = filter_names(
+            rels, ns, trans=trans_dict, err=err_list, threshold=threshold)
+    
+    # 获取最终的人名列表（用于段落查找）
+    final_names_list = list(names_cooccurrence)
+    print(f"\n✅ 共现统计完成，得到 {len(final_names_list)} 个最终人名")
+    print(f"   人名列表: {final_names_list}")
+    
     if use_llm:
         # 使用 LLM 分析（默认模式）
         api_key = args.api_key or os.getenv('API_KEY')
@@ -1083,7 +1137,7 @@ if __name__ == "__main__":
         
         if use_llm:
             print(f"\n{'='*60}")
-            print(f"使用 LLM 分析模式（默认）")
+            print(f"第二步：LLM 分析模式（使用最终人名列表）")
             print(f"{'='*60}")
         
             # 读取文本文件
@@ -1099,14 +1153,13 @@ if __name__ == "__main__":
             print(f"📡 API 地址: {api_base_url}")
             print(f"📦 模型: {model_name}")
             
-            # 使用高频名字列表进行 LLM 分析
-            print(f"\n📋 使用 {len(auto_name_list)} 个高频人名进行 LLM 分析")
+            # 使用最终过滤后的人名列表进行 LLM 分析（而不是36个高频人名）
+            print(f"\n📋 使用共现统计过滤后的 {len(final_names_list)} 个最终人名进行段落查找")
             
             # 调用 LLM 分析函数
-            # 注意：需要在 analyze_relationships_with_llm 中返回段落数据
             relationships, all_names, paragraphs_data = analyze_relationships_with_llm(
                 text_lines,
-                auto_name_list,
+                final_names_list,  # 使用最终过滤后的人名列表
                 base_url=api_base_url,
                 api_key=api_key,
                 model_name=model_name,
@@ -1125,13 +1178,16 @@ if __name__ == "__main__":
                 print("⚠️ LLM 未提取到任何关系（LLM 分析已关闭）")
                 print("💡 段落数据已导出到 Excel，请检查内容是否正确")
                 use_llm = False
+                # 回退到共现统计结果
+                relations = relations_cooccurrence
+                names = names_cooccurrence
             else:
                 # 构建关系矩阵
-                # 合并所有名字，优先使用 auto_name_list 中的顺序
+                # 合并所有名字，优先使用 final_names_list 中的顺序
                 all_names_list = list(all_names)
-                # 先按 auto_name_list 的顺序排序，然后加上不在列表中的名字
-                names_in_list = [name for name in auto_name_list if name in all_names_list]
-                names_not_in_list = [name for name in all_names_list if name not in auto_name_list]
+                # 先按 final_names_list 的顺序排序，然后加上不在列表中的名字
+                names_in_list = [name for name in final_names_list if name in all_names_list]
+                names_not_in_list = [name for name in all_names_list if name not in final_names_list]
                 names_list_sorted = names_in_list + names_not_in_list
                 
                 relations, names = build_relation_matrix_from_llm(relationships, names_list_sorted)
@@ -1151,13 +1207,9 @@ if __name__ == "__main__":
         print(f"使用共现统计模式")
         print(f"{'='*60}")
         
-        ### 重新进行统计和计数
-        model = hanlp(custom_dict=True)#,analyzer="CRF")
-        rels,ns,_ = count_names(fp,model)
-      
-        ##### 根据手工调整以不同效果展示
-        relations, names = filter_names(
-                rels, ns, trans=trans_dict, err=err_list, threshold=threshold)
+        # 使用之前已经计算好的结果
+        relations = relations_cooccurrence
+        names = names_cooccurrence
 
     ##### 展示最终结果和信息
     # 传递书籍名称给 plot_rel 函数，用于生成带书籍名的文件名
