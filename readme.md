@@ -1,13 +1,14 @@
 # 小说人物关系提取
 
-基于 HanLP 和 LLM API 的小说人物关系分析工具。
+基于 HanLP 和 UIE 的小说人物关系分析工具（LLM 分析功能已禁用）。
 
 ## 功能
 
 - ✅ 使用 HanLP 提取小说中的人名
-- ✅ 使用 LLM API 分析人物关系
+- ✅ 使用 HanLP 共现统计分析人物关系（默认）
+- ✅ 使用 UIE（本地）分析人物关系（可选）
 - ✅ 自动生成人物关系图
-- ✅ 导出 Excel 表格（关系详情、人物统计、关系类型统计）
+- ✅ 导出 Excel 表格（关系详情、人物统计）
 
 ## 快速开始
 
@@ -20,27 +21,27 @@ pip install -r requirements.txt
 # 2. 准备小说文件
 # 将小说 txt 文件放在 book/ 目录下
 
-# 3. 运行分析（使用 HanLP 共现统计）
+# 3. 运行分析（使用 HanLP 共现统计，默认模式）
 python rel.py --book 冬日重现
 
-# 4. 运行分析（使用 LLM API，需要配置 API 密钥）
-export API_BASE_URL="https://miaodi.zeabur.app"
-export API_KEY="your-api-key"
-export API_MODEL="deepseek-ai/DeepSeek-V3-0324"
-python rel_api_optimized.py --book 冬日重现
+# 4. 运行分析（使用 UIE 分析）
+python rel.py --book 冬日重现 --use_uie
 ```
 
 ### 输出结果
 
 - **关系图**: `output/书名_relationship.png`
-- **Excel 文件**: `output/书名_人物关系.xlsx`
+- **Excel 文件**: 
+  - `output/书名_人物名称.xlsx` - 包含所有提取的人物名称
+  - `output/书名_人物关系.xlsx` - 包含人物关系详情和统计
+  - `output/书名_找到的段落.xlsx` - 包含包含人物的段落内容
 
 ## 脚本说明
 
 | 脚本 | 说明 | 适用场景 |
 |------|------|----------|
-| `rel.py` | 使用 HanLP 共现统计 | 本地快速分析 |
-| `rel_api_optimized.py` | 使用 LLM API 分析关系 | 需要准确关系类型 |
+| `rel.py` | 使用 HanLP 共现统计（默认） | 本地快速分析 |
+| `rel.py --use_uie` | 使用 UIE 分析 | 本地准确分析 |
 
 ## GitHub Actions 配置
 
